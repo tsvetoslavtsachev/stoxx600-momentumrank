@@ -1,0 +1,52 @@
+name: Update STOXX 600 MomentumRank Data
+
+on:
+  schedule:
+    # Всеки делничен ден в 08:00 UTC (11:00 EEST) — след отваряне на Европа
+    - cron: "0 8 * * 1-5"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update-data:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60   # 600 тикера × ~5 сек = ~50 мин
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install \
+            "yfinance>=0.2.55" \
+            "pandas>=2.0" \
+            "numpy>=1.24" \
+            "requests>=2.31" \
+            "lxml" \
+            "html5lib"
+
+      - name: Run fetch_data.py
+        run: python fetch_data.py
+        env:
+          PYTHONUNBUFFERED: "1"
+
+      - name: Commit and push data.json
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data.json data_meta.json
+          git diff --staged --quiet && echo "No changes to commit" || (
+            git commit -m "data: STOXX 600 momentum update $(date -u +'%Y-%m-%d %H:%M UTC')"
+            git push
+          )
