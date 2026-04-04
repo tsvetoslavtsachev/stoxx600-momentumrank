@@ -1,0 +1,1112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MomentumRank — STOXX Europe 600</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+<style>
+/* ========== RESET & BASE ========== */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { font-size: 13px; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+body {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  background: #0d1117;
+  color: #e6eaf0;
+  line-height: 1.4;
+  overflow: hidden;
+  height: 100vh;
+}
+
+/* ========== DESIGN TOKENS ========== */
+:root {
+  --bg:           #0d1117;
+  --card:         #161b22;
+  --card-hover:   #1c2230;
+  --border:       #252d3a;
+  --border-light: #2f3a4d;
+  --text:         #e6eaf0;
+  --text-secondary: #8b95a8;
+  --text-muted:   #5a6478;
+  --accent:       #1a7f5a;       /* зелено — европейски цвят */
+  --accent-hover: #14624a;
+  --accent-dim:   rgba(26,127,90,0.14);
+  --green:        #2ea87a;
+  --green-dim:    rgba(46,168,122,0.1);
+  --red:          #e05252;
+  --red-dim:      rgba(224,82,82,0.1);
+  --yellow:       #d4a017;
+  --row-height:   32px;
+}
+
+/* ========== LAYOUT ========== */
+.app { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+.app-body { display: flex; flex: 1; min-height: 0; overflow: hidden; }
+.app-body .main-content { flex: 1; min-width: 0; }
+
+/* ========== KPI HEADER ========== */
+.kpi-bar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 16px;
+  background: #0b0f15;
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.logo { display: flex; align-items: center; gap: 6px; margin-right: 16px; flex-shrink: 0; }
+.logo svg { width: 22px; height: 22px; }
+.logo-text { font-size: 14px; font-weight: 700; letter-spacing: -0.3px; color: var(--text); }
+.logo-text span { color: var(--accent); }
+.logo-sub { font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; color: var(--text-muted); margin-top: 1px; }
+.kpi-group { display: flex; gap: 6px; flex: 1; flex-wrap: wrap; }
+.kpi-card {
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: 6px; padding: 6px 14px; min-width: 120px;
+}
+.kpi-label { font-size: 10px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); margin-bottom: 1px; }
+.kpi-value { font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--text); }
+.kpi-date { font-size: 11px; color: var(--text-muted); margin-left: auto; flex-shrink: 0; white-space: nowrap; }
+
+/* ========== FILTERS BAR ========== */
+.filters-bar {
+  display: flex; align-items: center; gap: 6px;
+  padding: 8px 16px;
+  background: var(--bg); border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.filter-group { display: flex; align-items: center; gap: 4px; }
+.filter-label { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px; color: var(--text-muted); margin-right: 2px; white-space: nowrap; }
+.filter-select, .filter-input {
+  background: var(--card); border: 1px solid var(--border); border-radius: 4px;
+  color: var(--text); font-family: inherit; font-size: 11px; padding: 4px 8px; outline: none; transition: border-color 0.15s;
+}
+.filter-select:focus, .filter-input:focus { border-color: var(--accent); }
+.filter-input { width: 172px; }
+.filter-input::placeholder { color: var(--text-muted); }
+
+/* Multi-select dropdown */
+.multi-select { position: relative; display: inline-block; }
+.multi-select-btn {
+  background: var(--card); border: 1px solid var(--border); border-radius: 4px;
+  color: var(--text); font-family: inherit; font-size: 11px; padding: 4px 24px 4px 8px;
+  cursor: pointer; white-space: nowrap; min-width: 110px; text-align: left; position: relative; line-height: 1.4;
+}
+.multi-select-btn::after {
+  content: ''; position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+  border-left: 4px solid transparent; border-right: 4px solid transparent; border-top: 4px solid var(--text-muted);
+}
+.multi-select-dropdown {
+  display: none; position: absolute; top: 100%; left: 0; z-index: 100;
+  background: var(--card); border: 1px solid var(--border); border-radius: 6px;
+  padding: 4px 0; min-width: 210px; max-height: 320px; overflow-y: auto;
+  margin-top: 2px; box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+}
+.multi-select-dropdown.open { display: block; }
+.multi-select-item { display: flex; align-items: center; gap: 6px; padding: 5px 10px; cursor: pointer; font-size: 11px; transition: background 0.1s; }
+.multi-select-item:hover { background: var(--card-hover); }
+.multi-select-item input[type="checkbox"] { accent-color: var(--accent); width: 13px; height: 13px; flex-shrink: 0; }
+
+/* Quick filter buttons */
+.quick-btn {
+  background: var(--card); border: 1px solid var(--border); border-radius: 4px;
+  color: var(--text-secondary); font-family: inherit; font-size: 11px; font-weight: 500;
+  padding: 4px 10px; cursor: pointer; transition: all 0.15s; white-space: nowrap;
+}
+.quick-btn:hover { border-color: var(--accent); color: var(--text); }
+.quick-btn.active { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
+
+/* Range sliders */
+.range-group { display: flex; align-items: center; gap: 4px; }
+.range-group input[type="range"] {
+  width: 80px; height: 4px; -webkit-appearance: none; appearance: none;
+  background: var(--border); border-radius: 2px; outline: none;
+}
+.range-group input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 12px; height: 12px; border-radius: 50%;
+  background: var(--accent); cursor: pointer;
+}
+.range-group input[type="range"]::-moz-range-thumb {
+  width: 12px; height: 12px; border-radius: 50%; background: var(--accent); cursor: pointer; border: none;
+}
+.range-val { font-size: 10px; font-variant-numeric: tabular-nums; color: var(--text-secondary); min-width: 34px; text-align: right; }
+.clear-btn {
+  background: transparent; border: 1px solid var(--border); border-radius: 4px; color: var(--text-muted);
+  font-family: inherit; font-size: 11px; padding: 4px 10px; cursor: pointer; transition: all 0.15s;
+  margin-left: auto; white-space: nowrap;
+}
+.clear-btn:hover { border-color: var(--red); color: var(--red); }
+.sidebar-toggle {
+  background: var(--card); border: 1px solid var(--border); border-radius: 4px; color: var(--text-secondary);
+  font-family: inherit; font-size: 11px; font-weight: 500; padding: 4px 10px; cursor: pointer;
+  transition: all 0.15s; white-space: nowrap; display: flex; align-items: center; gap: 4px;
+}
+.sidebar-toggle:hover { border-color: var(--accent); color: var(--text); }
+.sidebar-toggle.active { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
+
+/* ========== SECTOR PANEL ========== */
+.sector-panel {
+  padding: 0 16px; background: var(--bg); overflow: hidden;
+  transition: max-height 0.3s ease, padding 0.3s ease;
+  max-height: 0; border-bottom: none;
+}
+.sector-panel.open { max-height: 220px; padding: 8px 16px; border-bottom: 1px solid var(--border); }
+.sector-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.sector-title { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); }
+.sector-toggle { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 11px; font-family: inherit; }
+.sector-bars { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 2px; }
+.sector-bar-item {
+  display: flex; align-items: center; gap: 6px; padding: 3px 6px;
+  border-radius: 3px; cursor: pointer; transition: background 0.15s; font-size: 11px;
+}
+.sector-bar-item:hover { background: var(--card); }
+.sector-bar-item.active { background: var(--accent-dim); }
+.sector-bar-label { width: 70px; flex-shrink: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-secondary); font-size: 10px; }
+.sector-bar-track { flex: 1; height: 10px; background: var(--card); border-radius: 2px; overflow: hidden; position: relative; }
+.sector-bar-fill { height: 100%; border-radius: 2px; transition: width 0.4s ease; }
+.sector-bar-value { font-variant-numeric: tabular-nums; font-size: 10px; font-weight: 600; width: 42px; text-align: right; flex-shrink: 0; }
+.sector-bar-count { font-size: 9px; color: var(--text-muted); width: 22px; text-align: right; flex-shrink: 0; }
+
+/* ========== TABLE ========== */
+.main-content { overflow: hidden; display: flex; flex-direction: column; }
+.table-wrapper { flex: 1; overflow: auto; position: relative; }
+.data-table { width: 100%; border-collapse: collapse; table-layout: fixed; font-variant-numeric: tabular-nums; }
+.data-table thead { position: sticky; top: 0; z-index: 10; }
+.data-table th {
+  background: #0b0f15; border-bottom: 2px solid var(--border);
+  padding: 0 6px; height: 30px; text-align: left;
+  font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.3px;
+  color: var(--text-muted); cursor: pointer; user-select: none; white-space: nowrap;
+  position: relative; transition: color 0.15s;
+}
+.data-table th:hover { color: var(--text); }
+.data-table th.sorted { color: var(--accent); }
+.data-table th .sort-arrow { display: inline-block; margin-left: 3px; font-size: 8px; opacity: 0; transition: opacity 0.15s; }
+.data-table th.sorted .sort-arrow { opacity: 1; }
+.data-table th.num { text-align: right; }
+
+/* Column widths — Country добавена */
+.col-check   { width: 28px; }
+.col-rank    { width: 36px; }
+.col-ticker  { width: 72px; }   /* по-широк за суфикс .AS, .DE итн. */
+.col-name    { width: 140px; }
+.col-sector  { width: 68px; }
+.col-country { width: 52px; }   /* НОВО */
+.col-price   { width: 60px; }
+.col-ret     { width: 60px; }
+.col-vol     { width: 48px; }
+.col-sharpe  { width: 48px; }
+.col-avgvol  { width: 54px; }
+.col-mcap    { width: 62px; }
+.col-dd      { width: 50px; }
+.col-score   { width: 84px; }
+
+.data-table tbody tr {
+  height: var(--row-height); border-bottom: 1px solid rgba(37,45,58,0.5);
+  transition: background 0.1s; content-visibility: auto; contain-intrinsic-height: var(--row-height);
+}
+.data-table tbody tr:hover { background: var(--card-hover); }
+.data-table tbody tr.selected { background: rgba(26,127,90,0.07); }
+.data-table td {
+  padding: 0 6px; font-size: 11.5px; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; vertical-align: middle; height: var(--row-height);
+}
+.data-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.text-green  { color: var(--green); }
+.text-red    { color: var(--red); }
+.text-muted  { color: var(--text-muted); }
+.ticker-cell { font-weight: 700; color: var(--text); font-size: 10.5px; }
+.name-cell   { color: var(--text-secondary); font-size: 11px; }
+.sector-cell { font-size: 10px; color: var(--text-muted); }
+.country-cell { font-size: 10px; color: var(--text-muted); text-align: center; }
+
+/* Score bar */
+.score-cell { display: flex; align-items: center; gap: 5px; height: var(--row-height); }
+.score-bar-track { width: 38px; height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; flex-shrink: 0; }
+.score-bar-fill { height: 100%; border-radius: 3px; background: var(--accent); transition: width 0.3s ease; }
+.score-val { font-weight: 600; font-size: 11px; font-variant-numeric: tabular-nums; }
+.row-check { accent-color: var(--accent); width: 13px; height: 13px; cursor: pointer; }
+
+/* ========== SIDEBAR ========== */
+.sidebar { display: none; background: #0b0f15; border-left: 1px solid var(--border); overflow-y: auto; width: 320px; flex-shrink: 0; }
+.sidebar.open { display: flex; flex-direction: column; }
+.sidebar-header { padding: 12px 14px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+.sidebar-title { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
+.sidebar-close { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 16px; padding: 2px 4px; line-height: 1; }
+.sidebar-close:hover { color: var(--text); }
+.sidebar-metrics { padding: 10px 14px; border-bottom: 1px solid var(--border); display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.sidebar-metric .sm-label { font-size: 9px; text-transform: uppercase; letter-spacing: 0.4px; color: var(--text-muted); }
+.sidebar-metric .sm-value { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.sidebar-pie-section { padding: 10px 14px; border-bottom: 1px solid var(--border); }
+.pie-title { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px; color: var(--text-muted); margin-bottom: 6px; }
+.pie-container { display: flex; align-items: center; gap: 10px; }
+.pie-chart-svg { width: 80px; height: 80px; flex-shrink: 0; }
+.pie-legend { display: flex; flex-direction: column; gap: 2px; flex: 1; overflow: hidden; }
+.pie-legend-item { display: flex; align-items: center; gap: 4px; font-size: 10px; }
+.pie-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.pie-legend-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); }
+.pie-legend-pct { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--text); }
+.sidebar-stocks { flex: 1; overflow-y: auto; padding: 6px 0; }
+.sidebar-stock-item { display: flex; align-items: center; gap: 6px; padding: 5px 14px; font-size: 11px; border-bottom: 1px solid rgba(37,45,58,0.4); }
+.sidebar-stock-ticker { font-weight: 700; width: 64px; flex-shrink: 0; font-size: 10.5px; }
+.sidebar-stock-ret { font-variant-numeric: tabular-nums; font-size: 11px; width: 50px; text-align: right; flex-shrink: 0; }
+.sidebar-stock-weight { margin-left: auto; }
+.sidebar-stock-weight input {
+  width: 48px; background: var(--card); border: 1px solid var(--border); border-radius: 3px;
+  color: var(--text); font-family: inherit; font-size: 10px; font-variant-numeric: tabular-nums;
+  padding: 2px 4px; text-align: right; outline: none;
+}
+.sidebar-stock-weight input:focus { border-color: var(--accent); }
+.sidebar-stock-remove { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 13px; padding: 0 2px; line-height: 1; }
+.sidebar-stock-remove:hover { color: var(--red); }
+.sidebar-actions { padding: 10px 14px; border-top: 1px solid var(--border); display: flex; gap: 6px; }
+.btn-primary {
+  flex: 1; background: var(--accent); border: none; border-radius: 4px; color: #fff;
+  font-family: inherit; font-size: 11px; font-weight: 600; padding: 7px 12px; cursor: pointer; transition: background 0.15s;
+}
+.btn-primary:hover { background: var(--accent-hover); }
+.btn-secondary {
+  flex: 1; background: transparent; border: 1px solid var(--border); border-radius: 4px;
+  color: var(--text-secondary); font-family: inherit; font-size: 11px; font-weight: 500;
+  padding: 7px 12px; cursor: pointer; transition: all 0.15s;
+}
+.btn-secondary:hover { border-color: var(--red); color: var(--red); }
+
+/* ========== FOOTER ========== */
+.table-footer {
+  padding: 6px 16px; background: #0b0f15; border-top: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 11px; color: var(--text-muted);
+}
+.table-footer-info { font-variant-numeric: tabular-nums; }
+
+/* ========== MISC ========== */
+.sector-toggle-btn {
+  background: var(--card); border: 1px solid var(--border); border-radius: 4px; color: var(--text-secondary);
+  font-family: inherit; font-size: 11px; font-weight: 500; padding: 4px 10px; cursor: pointer; transition: all 0.15s; white-space: nowrap;
+}
+.sector-toggle-btn:hover { border-color: var(--accent); color: var(--text); }
+.sector-toggle-btn.active { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--border-light); }
+.filter-sep { width: 1px; height: 20px; background: var(--border); flex-shrink: 0; margin: 0 2px; }
+.no-results { text-align: center; padding: 40px 20px; color: var(--text-muted); font-size: 13px; }
+@media (max-width: 1024px) {
+  .app-body { flex-direction: column; }
+  .sidebar { width: 100% !important; border-left: none; border-top: 1px solid var(--border); max-height: 40vh; }
+}
+</style>
+</head>
+<body>
+
+<div class="app" id="app">
+
+  <!-- KPI Header -->
+  <div class="kpi-bar">
+    <div class="logo">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="color: var(--accent);">
+        <polyline points="4 17 10 11 14 15 20 7"/>
+        <polyline points="16 7 20 7 20 11"/>
+      </svg>
+      <div>
+        <div class="logo-text">Momentum<span>Rank</span></div>
+        <div class="logo-sub">STOXX Europe 600</div>
+      </div>
+    </div>
+    <div class="kpi-group">
+      <div class="kpi-card">
+        <div class="kpi-label">Stocks</div>
+        <div class="kpi-value" id="kpi-total">—</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Avg 12M Return</div>
+        <div class="kpi-value" id="kpi-avg-ret">—</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Avg Volatility</div>
+        <div class="kpi-value" id="kpi-avg-vol">—</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-label">Portfolio</div>
+        <div class="kpi-value" id="kpi-portfolio">0</div>
+      </div>
+    </div>
+    <div class="kpi-date" id="kpi-date">Loading...</div>
+  </div>
+
+  <!-- Filters Bar -->
+  <div class="filters-bar">
+    <div class="filter-group">
+      <input type="text" class="filter-input" id="search-input" placeholder="Search ticker or name... (Ctrl+F)" autocomplete="off">
+    </div>
+
+    <div class="filter-sep"></div>
+    <div class="filter-group">
+      <span class="filter-label">Sector</span>
+      <div class="multi-select">
+        <button class="multi-select-btn" id="sector-btn">All Sectors</button>
+        <div class="multi-select-dropdown" id="sector-dropdown"></div>
+      </div>
+    </div>
+
+    <div class="filter-group">
+      <span class="filter-label">Country</span>
+      <div class="multi-select">
+        <button class="multi-select-btn" id="country-btn">All Countries</button>
+        <div class="multi-select-dropdown" id="country-dropdown"></div>
+      </div>
+    </div>
+
+    <div class="filter-group">
+      <span class="filter-label">Cap</span>
+      <div class="multi-select">
+        <button class="multi-select-btn" id="cap-btn">All Caps</button>
+        <div class="multi-select-dropdown" id="cap-dropdown"></div>
+      </div>
+    </div>
+
+    <div class="filter-sep"></div>
+    <div class="filter-group range-group">
+      <span class="filter-label">12M Ret</span>
+      <input type="range" id="ret-min-slider">
+      <span class="range-val" id="ret-min-val">—</span>
+      <span style="color:var(--text-muted);font-size:10px;">–</span>
+      <input type="range" id="ret-max-slider">
+      <span class="range-val" id="ret-max-val">—</span>
+    </div>
+
+    <div class="filter-group range-group">
+      <span class="filter-label">Vol</span>
+      <input type="range" id="vol-min-slider">
+      <span class="range-val" id="vol-min-val">—</span>
+      <span style="color:var(--text-muted);font-size:10px;">–</span>
+      <input type="range" id="vol-max-slider">
+      <span class="range-val" id="vol-max-val">—</span>
+    </div>
+
+    <div class="filter-group range-group">
+      <span class="filter-label">Min Score</span>
+      <input type="range" id="score-slider">
+      <span class="range-val" id="score-val">—</span>
+    </div>
+
+    <div class="filter-sep"></div>
+    <button class="quick-btn" id="top20-btn">Top 20</button>
+    <button class="quick-btn" id="top50-btn">Top 50</button>
+    <button class="quick-btn" id="top100-btn">Top 100</button>
+
+    <button class="sector-toggle-btn" id="sector-chart-toggle">Sectors</button>
+    <button class="sidebar-toggle" id="portfolio-toggle">&#9776; Portfolio</button>
+    <button class="clear-btn" id="clear-all">Clear Filters</button>
+  </div>
+
+  <!-- Sector Panel -->
+  <div class="sector-panel" id="sector-panel">
+    <div class="sector-header">
+      <span class="sector-title">Sector Average 12M Returns</span>
+      <button class="sector-toggle" id="sector-panel-close">Hide ▲</button>
+    </div>
+    <div class="sector-bars" id="sector-bars"></div>
+  </div>
+
+  <div class="app-body">
+    <!-- Main Table -->
+    <div class="main-content">
+      <div class="table-wrapper" id="table-wrapper">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th class="col-check"><input type="checkbox" class="row-check" id="select-all" title="Select all visible"></th>
+              <th class="col-rank num" data-sort="momentumScore" data-dir="desc">Rank <span class="sort-arrow">▼</span></th>
+              <th class="col-ticker" data-sort="symbol">Ticker <span class="sort-arrow">▲</span></th>
+              <th class="col-name" data-sort="name">Company <span class="sort-arrow">▲</span></th>
+              <th class="col-sector" data-sort="sector">Sector <span class="sort-arrow">▲</span></th>
+              <th class="col-country" data-sort="country">Ctry <span class="sort-arrow">▲</span></th>
+              <th class="col-price num" data-sort="price">Price <span class="sort-arrow">▲</span></th>
+              <th class="col-ret num" data-sort="return12m">12M <span class="sort-arrow">▲</span></th>
+              <th class="col-ret num" data-sort="return6m">6M <span class="sort-arrow">▲</span></th>
+              <th class="col-ret num" data-sort="return3m">3M <span class="sort-arrow">▲</span></th>
+              <th class="col-ret num" data-sort="return1m">1M <span class="sort-arrow">▲</span></th>
+              <th class="col-vol num" data-sort="volatility">Vol <span class="sort-arrow">▲</span></th>
+              <th class="col-sharpe num" data-sort="sharpe">Sharpe <span class="sort-arrow">▲</span></th>
+              <th class="col-avgvol num" data-sort="avgVolume">Avg Vol <span class="sort-arrow">▲</span></th>
+              <th class="col-mcap num" data-sort="marketCap">Mkt Cap <span class="sort-arrow">▲</span></th>
+              <th class="col-dd num" data-sort="drawdown">DD <span class="sort-arrow">▲</span></th>
+              <th class="col-score" data-sort="momentumScore">Score <span class="sort-arrow">▲</span></th>
+            </tr>
+          </thead>
+          <tbody id="table-body">
+            <tr><td colspan="17" class="no-results">Loading data...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Portfolio Sidebar -->
+    <div class="sidebar" id="sidebar">
+      <div class="sidebar-header">
+        <span class="sidebar-title">Portfolio</span>
+        <button class="sidebar-close" id="sidebar-close">&times;</button>
+      </div>
+      <div class="sidebar-metrics">
+        <div class="sidebar-metric"><div class="sm-label">Wtd Return</div><div class="sm-value" id="sm-ret">—</div></div>
+        <div class="sidebar-metric"><div class="sm-label">Wtd Volatility</div><div class="sm-value" id="sm-vol">—</div></div>
+        <div class="sidebar-metric"><div class="sm-label">Stocks</div><div class="sm-value" id="sm-count">0</div></div>
+        <div class="sidebar-metric"><div class="sm-label">Avg Score</div><div class="sm-value" id="sm-score">—</div></div>
+      </div>
+      <div class="sidebar-pie-section" id="pie-section" style="display:none;">
+        <div class="pie-title">Sector Breakdown</div>
+        <div class="pie-container">
+          <svg class="pie-chart-svg" viewBox="0 0 36 36" id="pie-chart"></svg>
+          <div class="pie-legend" id="pie-legend"></div>
+        </div>
+      </div>
+      <div class="sidebar-stocks" id="sidebar-stocks"></div>
+      <div class="sidebar-actions">
+        <button class="btn-primary" id="export-portfolio-xlsx">&#8595; Export Excel</button>
+        <button class="btn-secondary" id="clear-selection">Clear All</button>
+      </div>
+    </div>
+  </div><!-- /app-body -->
+
+  <!-- Table Footer -->
+  <div class="table-footer">
+    <div class="table-footer-info" id="table-footer-info">Loading...</div>
+    <div style="display:flex;align-items:center;gap:8px;">
+      <button id="export-table-xlsx" style="background:var(--card);border:1px solid var(--border);border-radius:4px;color:var(--text-secondary);font-family:inherit;font-size:10px;font-weight:500;padding:3px 9px;cursor:pointer;transition:all 0.15s;" onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--text)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--text-secondary)'">&#8595; Export Table (.xlsx)</button>
+      <span style="font-size:10px; color: var(--text-muted);">STOXX Europe 600 Momentum Ranking &middot; MomentumRank</span>
+    </div>
+  </div>
+
+</div><!-- /app -->
+
+<script>
+(function() {
+  'use strict';
+
+  // ==================== STATE ====================
+  let allData      = [];
+  let filteredData = [];
+  let sortCol      = 'momentumScore';
+  let sortDir      = 'desc';
+  let selectedSymbols  = new Set();
+  let activeTopFilter  = null;
+  let sectorFilters    = new Set();
+  let countryFilters   = new Set();
+  let capFilters       = new Set();
+  let sectorPanelOpen  = false;
+
+  const SECTORS = [
+    'Basic Materials', 'Communication Services', 'Consumer Cyclical',
+    'Consumer Defensive', 'Energy', 'Financial Services', 'Healthcare',
+    'Industrials', 'Real Estate', 'Technology', 'Utilities'
+  ];
+  const CAP_LABELS = ['Mega (>200B)', 'Large (50-200B)', 'Mid (10-50B)', 'Small (<10B)'];
+  const PIE_COLORS = ['#1a7f5a','#3b82f6','#e05252','#d4a017','#8b5cf6','#ec4899','#f97316','#14b8a6','#6366f1','#84cc16','#f43f5e'];
+
+  // Country ISO-2 codes for flag emoji
+  const COUNTRY_ISO = {
+    'United Kingdom': 'GB', 'Germany': 'DE', 'France': 'FR', 'Switzerland': 'CH',
+    'Netherlands': 'NL', 'Sweden': 'SE', 'Spain': 'ES', 'Italy': 'IT',
+    'Finland': 'FI', 'Belgium': 'BE', 'Norway': 'NO', 'Denmark': 'DK',
+    'Austria': 'AT', 'Portugal': 'PT', 'Ireland': 'IE', 'Luxembourg': 'LU',
+    'Poland': 'PL', 'Greece': 'GR', 'Israel': 'IL', 'Bermuda': 'BM',
+  };
+  function countryFlag(country) {
+    const iso = COUNTRY_ISO[country];
+    if (!iso) return country.slice(0, 2).toUpperCase();
+    // Regional indicator letters
+    return String.fromCodePoint(...[...iso].map(c => 0x1F1E6 + c.charCodeAt(0) - 65));
+  }
+
+  // ==================== DOM REFS ====================
+  const dom = {
+    app:          document.getElementById('app'),
+    tbody:        document.getElementById('table-body'),
+    footerInfo:   document.getElementById('table-footer-info'),
+    searchInput:  document.getElementById('search-input'),
+    sectorBtn:    document.getElementById('sector-btn'),
+    sectorDropdown: document.getElementById('sector-dropdown'),
+    countryBtn:   document.getElementById('country-btn'),
+    countryDropdown: document.getElementById('country-dropdown'),
+    capBtn:       document.getElementById('cap-btn'),
+    capDropdown:  document.getElementById('cap-dropdown'),
+    retMinSlider: document.getElementById('ret-min-slider'),
+    retMaxSlider: document.getElementById('ret-max-slider'),
+    retMinVal:    document.getElementById('ret-min-val'),
+    retMaxVal:    document.getElementById('ret-max-val'),
+    volMinSlider: document.getElementById('vol-min-slider'),
+    volMaxSlider: document.getElementById('vol-max-slider'),
+    volMinVal:    document.getElementById('vol-min-val'),
+    volMaxVal:    document.getElementById('vol-max-val'),
+    scoreSlider:  document.getElementById('score-slider'),
+    scoreVal:     document.getElementById('score-val'),
+    sectorPanel:  document.getElementById('sector-panel'),
+    sectorBars:   document.getElementById('sector-bars'),
+    sidebar:      document.getElementById('sidebar'),
+    sidebarStocks: document.getElementById('sidebar-stocks'),
+    selectAll:    document.getElementById('select-all'),
+  };
+
+  // ==================== FORMAT HELPERS ====================
+  function fmtPct(v)   { if (v == null) return '—'; return (v >= 0 ? '+' : '') + v.toFixed(2) + '%'; }
+  function fmtPrice(v) {
+    if (v == null || v === 0) return '—';
+    // European prices — no $ sign, just number
+    if (v >= 1000) return v.toFixed(0);
+    if (v >= 100)  return v.toFixed(1);
+    return v.toFixed(2);
+  }
+  function fmtVol(v) {
+    if (!v) return '—';
+    if (v >= 1e6) return (v / 1e6).toFixed(1) + 'M';
+    if (v >= 1e3) return (v / 1e3).toFixed(0) + 'K';
+    return v.toString();
+  }
+  function fmtCap(v) {
+    // marketCap in EUR
+    if (!v) return '—';
+    if (v >= 1e12) return '€' + (v / 1e12).toFixed(2) + 'T';
+    if (v >= 1e9)  return '€' + (v / 1e9).toFixed(1) + 'B';
+    if (v >= 1e6)  return '€' + (v / 1e6).toFixed(0) + 'M';
+    return '€' + v.toFixed(0);
+  }
+  function retColor(v) { if (v > 0) return 'text-green'; if (v < 0) return 'text-red'; return 'text-muted'; }
+  function getCapCategory(cap) {
+    if (cap >= 200e9) return 'Mega (>200B)';
+    if (cap >= 50e9)  return 'Large (50-200B)';
+    if (cap >= 10e9)  return 'Mid (10-50B)';
+    return 'Small (<10B)';
+  }
+  function scoreColor(s) {
+    if (s >= 70) return '#2ea87a';
+    if (s >= 50) return '#1a7f5a';
+    if (s >= 30) return '#d4a017';
+    return '#e05252';
+  }
+  function abbreviateSector(s) {
+    const m = {
+      'Communication Services': 'Comm Svc', 'Consumer Cyclical': 'Cons Cyc',
+      'Consumer Defensive': 'Cons Def',    'Financial Services': 'Financials',
+      'Basic Materials': 'Materials',       'Real Estate': 'Real Est',
+    };
+    return m[s] || s;
+  }
+  function abbreviateCountry(c) {
+    const m = {
+      'United Kingdom': 'UK', 'Germany': 'DE', 'France': 'FR', 'Switzerland': 'CH',
+      'Netherlands': 'NL',   'Sweden': 'SE',  'Spain': 'ES', 'Italy': 'IT',
+      'Finland': 'FI',       'Belgium': 'BE', 'Norway': 'NO', 'Denmark': 'DK',
+      'Austria': 'AT',       'Portugal': 'PT','Ireland': 'IE','Luxembourg': 'LU',
+      'Poland': 'PL',        'Greece': 'GR',  'Israel': 'IL',
+    };
+    return m[c] || c.slice(0, 2).toUpperCase();
+  }
+
+  // ==================== DROPDOWNS ====================
+  function initSectorDropdown() {
+    dom.sectorDropdown.innerHTML = SECTORS.map(s =>
+      `<label class="multi-select-item"><input type="checkbox" value="${s}"> ${s}</label>`
+    ).join('');
+    dom.sectorDropdown.querySelectorAll('input').forEach(cb => {
+      cb.addEventListener('change', () => {
+        if (cb.checked) sectorFilters.add(cb.value); else sectorFilters.delete(cb.value);
+        updateSectorBtnText(); applyFilters();
+      });
+    });
+  }
+
+  function initCountryDropdown() {
+    const countries = [...new Set(allData.map(d => d.country).filter(Boolean))].sort();
+    dom.countryDropdown.innerHTML = countries.map(c =>
+      `<label class="multi-select-item"><input type="checkbox" value="${c}"> ${countryFlag(c)} ${c}</label>`
+    ).join('');
+    dom.countryDropdown.querySelectorAll('input').forEach(cb => {
+      cb.addEventListener('change', () => {
+        if (cb.checked) countryFilters.add(cb.value); else countryFilters.delete(cb.value);
+        updateCountryBtnText(); applyFilters();
+      });
+    });
+  }
+
+  function initCapDropdown() {
+    dom.capDropdown.innerHTML = CAP_LABELS.map(s =>
+      `<label class="multi-select-item"><input type="checkbox" value="${s}"> ${s}</label>`
+    ).join('');
+    dom.capDropdown.querySelectorAll('input').forEach(cb => {
+      cb.addEventListener('change', () => {
+        if (cb.checked) capFilters.add(cb.value); else capFilters.delete(cb.value);
+        updateCapBtnText(); applyFilters();
+      });
+    });
+  }
+
+  function updateSectorBtnText()  { dom.sectorBtn.textContent  = sectorFilters.size  === 0 ? 'All Sectors'   : sectorFilters.size  + ' Sectors'; }
+  function updateCountryBtnText() { dom.countryBtn.textContent = countryFilters.size === 0 ? 'All Countries' : countryFilters.size + ' Countries'; }
+  function updateCapBtnText()     { dom.capBtn.textContent     = capFilters.size     === 0 ? 'All Caps'      : capFilters.size     + ' Caps'; }
+
+  function setupDropdownToggle(btn, dropdown) {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      document.querySelectorAll('.multi-select-dropdown.open').forEach(d => { if (d !== dropdown) d.classList.remove('open'); });
+      dropdown.classList.toggle('open');
+    });
+  }
+  document.addEventListener('click', () => {
+    document.querySelectorAll('.multi-select-dropdown.open').forEach(d => d.classList.remove('open'));
+  });
+
+  // ==================== SLIDERS ====================
+  function initSliders() {
+    const rets   = allData.map(d => d.return12m);
+    const vols   = allData.map(d => d.volatility);
+    const scores = allData.map(d => d.momentumScore);
+    const retMin = Math.floor(Math.min(...rets));   const retMax = Math.ceil(Math.max(...rets));
+    const volMin = Math.floor(Math.min(...vols));   const volMax = Math.ceil(Math.max(...vols));
+    const scoreMin = Math.floor(Math.min(...scores));
+
+    dom.retMinSlider.min  = retMin;  dom.retMinSlider.max  = retMax;  dom.retMinSlider.value  = retMin;
+    dom.retMaxSlider.min  = retMin;  dom.retMaxSlider.max  = retMax;  dom.retMaxSlider.value  = retMax;
+    dom.volMinSlider.min  = volMin;  dom.volMinSlider.max  = volMax;  dom.volMinSlider.value  = volMin;
+    dom.volMaxSlider.min  = volMin;  dom.volMaxSlider.max  = volMax;  dom.volMaxSlider.value  = volMax;
+    dom.scoreSlider.min   = scoreMin; dom.scoreSlider.max  = 100;     dom.scoreSlider.value   = scoreMin;
+
+    dom.retMinVal.textContent = retMin  + '%'; dom.retMaxVal.textContent = retMax  + '%';
+    dom.volMinVal.textContent = volMin  + '%'; dom.volMaxVal.textContent = volMax  + '%';
+    dom.scoreVal.textContent  = scoreMin;
+
+    [dom.retMinSlider, dom.retMaxSlider].forEach(s => s.addEventListener('input', () => {
+      dom.retMinVal.textContent = dom.retMinSlider.value + '%';
+      dom.retMaxVal.textContent = dom.retMaxSlider.value + '%';
+      applyFilters();
+    }));
+    [dom.volMinSlider, dom.volMaxSlider].forEach(s => s.addEventListener('input', () => {
+      dom.volMinVal.textContent = dom.volMinSlider.value + '%';
+      dom.volMaxVal.textContent = dom.volMaxSlider.value + '%';
+      applyFilters();
+    }));
+    dom.scoreSlider.addEventListener('input', () => { dom.scoreVal.textContent = dom.scoreSlider.value; applyFilters(); });
+  }
+
+  // ==================== FILTERS ====================
+  function applyFilters() {
+    const search   = dom.searchInput.value.trim().toLowerCase();
+    const retMin   = +dom.retMinSlider.value;  const retMax = +dom.retMaxSlider.value;
+    const volMin   = +dom.volMinSlider.value;  const volMax = +dom.volMaxSlider.value;
+    const scoreMin = +dom.scoreSlider.value;
+
+    filteredData = allData.filter(d => {
+      if (search && !d.symbol.toLowerCase().includes(search) && !d.name.toLowerCase().includes(search) && !(d.country||'').toLowerCase().includes(search)) return false;
+      if (sectorFilters.size  > 0 && !sectorFilters.has(d.sector))          return false;
+      if (countryFilters.size > 0 && !countryFilters.has(d.country))        return false;
+      if (capFilters.size     > 0 && !capFilters.has(getCapCategory(d.marketCap))) return false;
+      if (d.return12m  < retMin   || d.return12m  > retMax)   return false;
+      if (d.volatility < volMin   || d.volatility > volMax)   return false;
+      if (d.momentumScore < scoreMin) return false;
+      return true;
+    });
+
+    if (activeTopFilter) {
+      filteredData.sort((a, b) => b.momentumScore - a.momentumScore);
+      filteredData = filteredData.slice(0, activeTopFilter);
+    }
+
+    sortData(); renderTable(); updateKPIs(); updateSectorBars(); updateFooter();
+  }
+
+  // ==================== SORTING ====================
+  function sortData() {
+    const dir = sortDir === 'asc' ? 1 : -1;
+    const col = sortCol;
+    filteredData.sort((a, b) => {
+      let va = a[col], vb = b[col];
+      if (typeof va === 'string') return dir * va.localeCompare(vb);
+      return dir * ((va || 0) - (vb || 0));
+    });
+  }
+
+  // ==================== RENDER TABLE ====================
+  function renderTable() {
+    const ranks = buildRankMap();
+    const html  = filteredData.map((d) => {
+      const rank = ranks.get(d.symbol);
+      const sel  = selectedSymbols.has(d.symbol);
+      const ctry = abbreviateCountry(d.country || '');
+      return `<tr class="${sel ? 'selected' : ''}" data-symbol="${d.symbol}">
+        <td><input type="checkbox" class="row-check" ${sel ? 'checked' : ''} data-sym="${d.symbol}"></td>
+        <td class="num">${rank}</td>
+        <td class="ticker-cell" title="${d.symbol}">${d.symbol}</td>
+        <td class="name-cell" title="${d.name}">${d.name}</td>
+        <td class="sector-cell">${abbreviateSector(d.sector)}</td>
+        <td class="country-cell" title="${d.country}">${ctry}</td>
+        <td class="num">${fmtPrice(d.price)}</td>
+        <td class="num ${retColor(d.return12m)}">${fmtPct(d.return12m)}</td>
+        <td class="num ${retColor(d.return6m)}">${fmtPct(d.return6m)}</td>
+        <td class="num ${retColor(d.return3m)}">${fmtPct(d.return3m)}</td>
+        <td class="num ${retColor(d.return1m)}">${fmtPct(d.return1m)}</td>
+        <td class="num">${d.volatility.toFixed(1)}%</td>
+        <td class="num">${d.sharpe.toFixed(2)}</td>
+        <td class="num">${fmtVol(d.avgVolume)}</td>
+        <td class="num">${fmtCap(d.marketCap)}</td>
+        <td class="num ${d.drawdown < -0.05 ? 'text-red' : 'text-muted'}">${d.drawdown.toFixed(1)}%</td>
+        <td><div class="score-cell"><div class="score-bar-track"><div class="score-bar-fill" style="width:${d.momentumScore}%;background:${scoreColor(d.momentumScore)}"></div></div><span class="score-val">${d.momentumScore.toFixed(1)}</span></div></td>
+      </tr>`;
+    }).join('');
+    dom.tbody.innerHTML = html;
+
+    dom.tbody.querySelectorAll('input.row-check').forEach(cb => {
+      cb.addEventListener('change', () => {
+        const sym = cb.dataset.sym;
+        if (cb.checked) selectedSymbols.add(sym); else selectedSymbols.delete(sym);
+        cb.closest('tr').classList.toggle('selected', cb.checked);
+        updatePortfolio();
+      });
+    });
+    dom.selectAll.checked = false;
+  }
+
+  function buildRankMap() {
+    const sorted = [...allData].sort((a, b) => b.momentumScore - a.momentumScore);
+    const map = new Map();
+    sorted.forEach((d, i) => map.set(d.symbol, i + 1));
+    return map;
+  }
+
+  // ==================== KPIs ====================
+  function updateKPIs() {
+    document.getElementById('kpi-total').textContent = filteredData.length.toString();
+    if (filteredData.length > 0) {
+      const avgRet = filteredData.reduce((s, d) => s + d.return12m, 0) / filteredData.length;
+      const avgVol = filteredData.reduce((s, d) => s + d.volatility, 0) / filteredData.length;
+      const el = document.getElementById('kpi-avg-ret');
+      el.textContent = (avgRet >= 0 ? '+' : '') + avgRet.toFixed(2) + '%';
+      el.className   = 'kpi-value ' + retColor(avgRet);
+      document.getElementById('kpi-avg-vol').textContent = avgVol.toFixed(2) + '%';
+    } else {
+      document.getElementById('kpi-avg-ret').textContent = '—';
+      document.getElementById('kpi-avg-ret').className   = 'kpi-value';
+      document.getElementById('kpi-avg-vol').textContent = '—';
+    }
+    document.getElementById('kpi-portfolio').textContent = selectedSymbols.size.toString();
+  }
+
+  function updateFooter() {
+    dom.footerInfo.textContent = `Showing ${filteredData.length} of ${allData.length} stocks`;
+  }
+
+  // ==================== SECTOR BARS ====================
+  function updateSectorBars() {
+    const stats = {};
+    SECTORS.forEach(s => stats[s] = { sum: 0, count: 0 });
+    filteredData.forEach(d => {
+      if (stats[d.sector]) { stats[d.sector].sum += d.return12m; stats[d.sector].count++; }
+    });
+    const maxAbs = Math.max(...SECTORS.map(s => stats[s].count > 0 ? Math.abs(stats[s].sum / stats[s].count) : 0), 1);
+    dom.sectorBars.innerHTML = SECTORS.map(s => {
+      const st  = stats[s];
+      const avg = st.count > 0 ? st.sum / st.count : 0;
+      const pct = Math.min(100, (Math.abs(avg) / maxAbs) * 100);
+      const col = avg >= 0 ? 'var(--green)' : 'var(--red)';
+      const active = sectorFilters.has(s) ? ' active' : '';
+      return `<div class="sector-bar-item${active}" data-sector="${s}">
+        <span class="sector-bar-label" title="${s}">${abbreviateSector(s)}</span>
+        <div class="sector-bar-track"><div class="sector-bar-fill" style="width:${pct}%;background:${col}"></div></div>
+        <span class="sector-bar-value" style="color:${col}">${avg >= 0 ? '+' : ''}${avg.toFixed(1)}%</span>
+        <span class="sector-bar-count">${st.count}</span>
+      </div>`;
+    }).join('');
+    dom.sectorBars.querySelectorAll('.sector-bar-item').forEach(el => {
+      el.addEventListener('click', () => {
+        const sec = el.dataset.sector;
+        if (sectorFilters.has(sec)) sectorFilters.delete(sec); else sectorFilters.add(sec);
+        updateSectorBtnText();
+        dom.sectorDropdown.querySelectorAll('input').forEach(cb => { cb.checked = sectorFilters.has(cb.value); });
+        applyFilters();
+      });
+    });
+  }
+
+  // ==================== PORTFOLIO SIDEBAR ====================
+  function updatePortfolio() { updateKPIs(); renderSidebar(); }
+
+  function renderSidebar() {
+    const items = allData.filter(d => selectedSymbols.has(d.symbol));
+    const count = items.length;
+    document.getElementById('sm-count').textContent = count;
+    if (count === 0) {
+      document.getElementById('sm-ret').textContent   = '—';
+      document.getElementById('sm-vol').textContent   = '—';
+      document.getElementById('sm-score').textContent = '—';
+      document.getElementById('pie-section').style.display = 'none';
+      dom.sidebarStocks.innerHTML = '<div style="padding:20px;text-align:center;color:var(--text-muted);font-size:12px;">Select stocks from the table</div>';
+      return;
+    }
+    const w = 1 / count;
+    const wtdRet   = items.reduce((s, d) => s + d.return12m * w, 0);
+    const wtdVol   = items.reduce((s, d) => s + d.volatility * w, 0);
+    const avgScore = items.reduce((s, d) => s + d.momentumScore, 0) / count;
+    const retEl    = document.getElementById('sm-ret');
+    retEl.textContent  = fmtPct(wtdRet);
+    retEl.className    = 'sm-value ' + retColor(wtdRet);
+    document.getElementById('sm-vol').textContent   = wtdVol.toFixed(2) + '%';
+    document.getElementById('sm-score').textContent = avgScore.toFixed(1);
+
+    const sectorCounts = {};
+    items.forEach(d => { sectorCounts[d.sector] = (sectorCounts[d.sector] || 0) + 1; });
+    renderPieChart(Object.entries(sectorCounts).sort((a, b) => b[1] - a[1]), count);
+
+    dom.sidebarStocks.innerHTML = items.map(d =>
+      `<div class="sidebar-stock-item">
+        <span class="sidebar-stock-ticker" title="${d.name}">${d.symbol}</span>
+        <span class="sidebar-stock-ret ${retColor(d.return12m)}">${fmtPct(d.return12m)}</span>
+        <span class="sidebar-stock-weight"><input type="text" value="${(100/count).toFixed(1)}%" title="Weight"></span>
+        <button class="sidebar-stock-remove" data-sym="${d.symbol}" title="Remove">&times;</button>
+      </div>`
+    ).join('');
+    dom.sidebarStocks.querySelectorAll('.sidebar-stock-remove').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const sym = btn.dataset.sym;
+        selectedSymbols.delete(sym);
+        const cb = dom.tbody.querySelector(`input[data-sym="${sym}"]`);
+        if (cb) { cb.checked = false; cb.closest('tr').classList.remove('selected'); }
+        updatePortfolio();
+      });
+    });
+  }
+
+  function renderPieChart(sectors, total) {
+    const pieSection = document.getElementById('pie-section');
+    if (!sectors.length) { pieSection.style.display = 'none'; return; }
+    pieSection.style.display = 'block';
+    const svgEl = document.getElementById('pie-chart');
+    const legEl = document.getElementById('pie-legend');
+    let cumAngle = 0, paths = '', legendHtml = '';
+    sectors.forEach(([sec, cnt], i) => {
+      const pct = cnt / total, angle = pct * 360;
+      const col = PIE_COLORS[i % PIE_COLORS.length];
+      if (pct >= 0.999) {
+        paths += `<circle cx="18" cy="18" r="15.9" fill="${col}" />`;
+      } else {
+        const x1 = 18 + 15.9 * Math.cos((cumAngle - 90) * Math.PI / 180);
+        const y1 = 18 + 15.9 * Math.sin((cumAngle - 90) * Math.PI / 180);
+        const x2 = 18 + 15.9 * Math.cos((cumAngle + angle - 90) * Math.PI / 180);
+        const y2 = 18 + 15.9 * Math.sin((cumAngle + angle - 90) * Math.PI / 180);
+        paths += `<path d="M18,18 L${x1},${y1} A15.9,15.9 0 ${angle > 180 ? 1 : 0},1 ${x2},${y2} Z" fill="${col}" />`;
+      }
+      legendHtml += `<div class="pie-legend-item"><span class="pie-dot" style="background:${col}"></span><span class="pie-legend-label">${abbreviateSector(sec)}</span><span class="pie-legend-pct">${(pct*100).toFixed(0)}%</span></div>`;
+      cumAngle += angle;
+    });
+    svgEl.innerHTML = paths; legEl.innerHTML = legendHtml;
+  }
+
+  // ==================== DATE DISPLAY ====================
+  function setUpdateDate(isoString) {
+    const el = document.getElementById('kpi-date');
+    if (!el) return;
+    try {
+      const clean = isoString.replace(' UTC', 'Z').replace(' ', 'T');
+      const d = new Date(clean);
+      if (isNaN(d.getTime())) throw new Error('bad date');
+      const opts = { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'UTC', timeZoneName: 'short' };
+      el.textContent = 'Updated ' + d.toLocaleString('en-GB', opts);
+    } catch { el.textContent = 'Updated ' + isoString; }
+  }
+
+  // ==================== EXCEL EXPORT ====================
+  function buildWorksheet(rows, headers) {
+    const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+    ws['!cols'] = headers.map(h => ({ wch: Math.max(h.length + 2, 12) }));
+    return ws;
+  }
+  function downloadXlsx(wb, filename) { XLSX.writeFile(wb, filename); }
+
+  function exportPortfolioXlsx() {
+    const items = allData.filter(d => selectedSymbols.has(d.symbol));
+    if (!items.length) { alert('Select stocks first using the checkboxes.'); return; }
+    const headers = ['Rank','Symbol','Name','Sector','Country','Price','12M Return (%)','6M Return (%)','3M Return (%)','1M Return (%)','Volatility (%)','Sharpe','Avg Volume','Market Cap (€)','Drawdown (%)','Momentum Score','Weight (%)'];
+    const rows = items.map((d, i) => [
+      i + 1, d.symbol, d.name, d.sector, d.country || '',
+      d.price, d.return12m, d.return6m, d.return3m, d.return1m,
+      d.volatility, d.sharpe, d.avgVolume, d.marketCap,
+      d.drawdown, d.momentumScore, d.weight || 0
+    ]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, buildWorksheet(rows, headers), 'Portfolio');
+    downloadXlsx(wb, `stoxx600_portfolio_${new Date().toISOString().slice(0,10)}.xlsx`);
+  }
+
+  function exportTableXlsx() {
+    if (!filteredData.length) { alert('No data to export.'); return; }
+    const headers = ['Rank','Symbol','Name','Sector','Country','Price','12M Ret (%)','6M Ret (%)','3M Ret (%)','1M Ret (%)','Volatility (%)','Sharpe','Avg Volume (M)','Market Cap (€B)','Drawdown (%)','Momentum Score'];
+    const rows = filteredData.map((d, i) => [
+      i + 1, d.symbol, d.name, d.sector, d.country || '',
+      d.price, d.return12m, d.return6m, d.return3m, d.return1m,
+      d.volatility, d.sharpe,
+      d.avgVolume > 0 ? +(d.avgVolume / 1e6).toFixed(2) : 0,
+      d.marketCap  > 0 ? +(d.marketCap  / 1e9).toFixed(2) : 0,
+      d.drawdown, d.momentumScore
+    ]);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, buildWorksheet(rows, headers), 'STOXX600');
+    const label = filteredData.length < allData.length ? `_filtered${filteredData.length}` : '_all';
+    downloadXlsx(wb, `stoxx600_momentumrank${label}_${new Date().toISOString().slice(0,10)}.xlsx`);
+  }
+
+  // ==================== SORT INIT ====================
+  function initSort() {
+    document.querySelectorAll('.data-table th[data-sort]').forEach(th => {
+      th.addEventListener('click', () => {
+        const col = th.dataset.sort;
+        if (sortCol === col) { sortDir = sortDir === 'asc' ? 'desc' : 'asc'; }
+        else { sortCol = col; sortDir = (['symbol','name','sector','country'].includes(col)) ? 'asc' : 'desc'; }
+        document.querySelectorAll('.data-table th').forEach(h => h.classList.remove('sorted'));
+        th.classList.add('sorted');
+        th.querySelector('.sort-arrow').textContent = sortDir === 'asc' ? '▲' : '▼';
+        sortData(); renderTable();
+      });
+    });
+    const initTh = document.querySelector('th[data-sort="momentumScore"]');
+    if (initTh) { initTh.classList.add('sorted'); initTh.querySelector('.sort-arrow').textContent = '▼'; }
+  }
+
+  // ==================== EVENTS ====================
+  function initEvents() {
+    // Search
+    dom.searchInput.addEventListener('input', debounce(applyFilters, 200));
+
+    // Quick filters
+    [['top20-btn', 20], ['top50-btn', 50], ['top100-btn', 100]].forEach(([id, n]) => {
+      document.getElementById(id).addEventListener('click', () => {
+        activeTopFilter = (activeTopFilter === n) ? null : n;
+        document.querySelectorAll('.quick-btn').forEach(b => b.classList.remove('active'));
+        if (activeTopFilter) document.getElementById(id).classList.add('active');
+        applyFilters();
+      });
+    });
+
+    // Sector panel toggle
+    document.getElementById('sector-chart-toggle').addEventListener('click', () => {
+      sectorPanelOpen = !sectorPanelOpen;
+      dom.sectorPanel.classList.toggle('open', sectorPanelOpen);
+      document.getElementById('sector-chart-toggle').classList.toggle('active', sectorPanelOpen);
+    });
+    document.getElementById('sector-panel-close').addEventListener('click', () => {
+      sectorPanelOpen = false;
+      dom.sectorPanel.classList.remove('open');
+      document.getElementById('sector-chart-toggle').classList.remove('active');
+    });
+
+    // Portfolio sidebar
+    document.getElementById('portfolio-toggle').addEventListener('click', () => {
+      const sidebar = document.getElementById('sidebar');
+      sidebar.classList.toggle('open');
+      document.getElementById('portfolio-toggle').classList.toggle('active', sidebar.classList.contains('open'));
+      renderSidebar();
+    });
+    document.getElementById('sidebar-close').addEventListener('click', () => {
+      document.getElementById('sidebar').classList.remove('open');
+      document.getElementById('portfolio-toggle').classList.remove('active');
+    });
+
+    // Select all
+    dom.selectAll.addEventListener('change', () => {
+      const checked = dom.selectAll.checked;
+      filteredData.forEach(d => { if (checked) selectedSymbols.add(d.symbol); else selectedSymbols.delete(d.symbol); });
+      renderTable(); updatePortfolio();
+    });
+
+    // Export buttons
+    document.getElementById('export-portfolio-xlsx').addEventListener('click', exportPortfolioXlsx);
+    document.getElementById('export-table-xlsx').addEventListener('click', exportTableXlsx);
+
+    // Clear selection
+    document.getElementById('clear-selection').addEventListener('click', () => {
+      selectedSymbols.clear(); renderTable(); updatePortfolio();
+    });
+
+    // Clear all filters
+    document.getElementById('clear-all').addEventListener('click', clearAllFilters);
+
+    // Keyboard shortcuts
+    document.addEventListener('keydown', (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'f') { e.preventDefault(); dom.searchInput.focus(); dom.searchInput.select(); }
+      if (e.key === 'Escape') { clearAllFilters(); dom.searchInput.blur(); }
+    });
+
+    // Dropdown toggles
+    setupDropdownToggle(dom.sectorBtn,  dom.sectorDropdown);
+    setupDropdownToggle(dom.countryBtn, dom.countryDropdown);
+    setupDropdownToggle(dom.capBtn,     dom.capDropdown);
+  }
+
+  function clearAllFilters() {
+    dom.searchInput.value = '';
+    sectorFilters.clear(); countryFilters.clear(); capFilters.clear();
+    activeTopFilter = null;
+    document.querySelectorAll('.quick-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.multi-select-dropdown input').forEach(cb => { cb.checked = false; });
+    updateSectorBtnText(); updateCountryBtnText(); updateCapBtnText();
+    dom.retMinSlider.value = dom.retMinSlider.min; dom.retMinVal.textContent = dom.retMinSlider.min + '%';
+    dom.retMaxSlider.value = dom.retMaxSlider.max; dom.retMaxVal.textContent = dom.retMaxSlider.max + '%';
+    dom.volMinSlider.value = dom.volMinSlider.min; dom.volMinVal.textContent = dom.volMinSlider.min + '%';
+    dom.volMaxSlider.value = dom.volMaxSlider.max; dom.volMaxVal.textContent = dom.volMaxSlider.max + '%';
+    dom.scoreSlider.value  = dom.scoreSlider.min;  dom.scoreVal.textContent  = dom.scoreSlider.min;
+    applyFilters();
+  }
+
+  function debounce(fn, ms) {
+    let t;
+    return function(...args) { clearTimeout(t); t = setTimeout(() => fn.apply(this, args), ms); };
+  }
+
+  // ==================== LOAD DATA ====================
+  async function init() {
+    let res;
+    try {
+      res     = await fetch('data.json');
+      allData = await res.json();
+    } catch (e) {
+      dom.tbody.innerHTML = '<tr><td colspan="17" class="no-results">Error loading data.json</td></tr>';
+      return;
+    }
+
+    // Date display: data_meta.json → Last-Modified → today
+    try {
+      const metaRes = await fetch('data_meta.json');
+      if (metaRes.ok) {
+        const meta = await metaRes.json();
+        if (meta.updated) { setUpdateDate(meta.updated); } else throw new Error();
+      } else throw new Error();
+    } catch {
+      try {
+        const lm = res.headers.get('Last-Modified');
+        if (lm) { setUpdateDate(lm); }
+        else {
+          const el = document.getElementById('kpi-date');
+          if (el) el.textContent = 'Updated ' + new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+        }
+      } catch { /* ignore */ }
+    }
+
+    initSectorDropdown();
+    initCountryDropdown();
+    initCapDropdown();
+    initSliders();
+    initSort();
+    initEvents();
+    applyFilters();
+    renderSidebar();
+
+    sectorPanelOpen = true;
+    dom.sectorPanel.classList.add('open');
+    document.getElementById('sector-chart-toggle').classList.add('active');
+  }
+
+  init();
+})();
+</script>
+</body>
+</html>
