@@ -90,6 +90,41 @@ EXCHANGE_SUFFIX = {
     "Warsaw Stock Exchange":              ".WA",
     "Athens Stock Exchange":              ".AT",
     "Tel Aviv Stock Exchange":            ".TA",
+    # iShares OMX/legacy variants (смесва старо и ново naming)
+    "Omx Nordic Exchange Copenhagen A/S": ".CO",
+    "Nasdaq Omx Nordic":                  ".ST",   # generic — но в STOXX 600 всички са шведски
+    "Nasdaq Omx Helsinki Ltd.":           ".HE",
+    "Nasdaq Omx Stockholm Ab":            ".ST",
+    "Nasdaq Omx Copenhagen A/S":          ".CO",
+    # Alternative naming variants
+    "Wiener Boerse Ag":                        ".VI",
+    "Warsaw Stock Exchange/Equities/Main Market": ".WA",
+    "Irish Stock Exchange - All Market":       ".IR",
+    "Nyse Euronext - Euronext Lisbon":         ".LS",
+}
+
+# Country-based fallback: ако exchange не е в EXCHANGE_SUFFIX, ползва country.
+# Така бъдещи rename-вания на борси в iShares не chupят скрипта.
+COUNTRY_SUFFIX_FALLBACK = {
+    "Sweden":         ".ST",
+    "Finland":        ".HE",
+    "Denmark":        ".CO",
+    "Norway":         ".OL",
+    "Poland":         ".WA",
+    "Austria":        ".VI",
+    "Ireland":        ".IR",
+    "Portugal":       ".LS",
+    "Germany":        ".DE",
+    "United Kingdom": ".L",
+    "France":         ".PA",
+    "Switzerland":    ".SW",
+    "Netherlands":    ".AS",
+    "Spain":          ".MC",
+    "Italy":          ".MI",
+    "Belgium":        ".BR",
+    "Greece":         ".AT",
+    "Israel":         ".TA",
+    "Luxembourg":     ".LU",
 }
 
 SECTOR_DE_EN = {
@@ -246,9 +281,21 @@ def fetch_ishares_constituents():
         weight_pct  = parse_de_number(row["Gewichtung (%)"])
         price_local = parse_de_number(row["Kurs"])
 
+        country_en = COUNTRY_DE_EN.get(country_de, country_de)
+
+        # Primary: exact exchange match
         suffix = EXCHANGE_SUFFIX.get(exchange)
+
+        # Fallback: country-based suffix (ако exchange е unknown)
         if suffix is None:
-            print(f"    WARN unknown exchange '{exchange}' ({raw_ticker} - {name})")
+            suffix = COUNTRY_SUFFIX_FALLBACK.get(country_en)
+            if suffix is not None:
+                print(f"    INFO unknown exchange '{exchange}' → fallback to "
+                      f"{suffix} (country={country_en}, {raw_ticker} - {name})")
+
+        if suffix is None:
+            print(f"    WARN unknown exchange '{exchange}' AND unknown country "
+                  f"'{country_en}' ({raw_ticker} - {name})")
             skipped_exchange += 1
             continue
 
@@ -256,8 +303,6 @@ def fetch_ishares_constituents():
         if sector_en is None:
             unknown_sectors.add(sector_de)
             sector_en = sector_de
-
-        country_en = COUNTRY_DE_EN.get(country_de, country_de)
 
         ticker_clean = raw_ticker.upper().replace(" ", "-").replace("/", "-")
         yahoo_symbol = ticker_clean + suffix
