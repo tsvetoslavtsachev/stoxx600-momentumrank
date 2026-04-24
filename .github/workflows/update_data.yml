@@ -1,10 +1,11 @@
-name: Update MomentumRank Data
+name: Update STOXX 600 MomentumRank Data
 
 on:
   schedule:
-    # Всеки делничен ден в 07:30 UTC (10:30 EEST) — след отваряне на пазара
-    - cron: "0 8 * * 1-5"
-  workflow_dispatch: # ръчно стартиране от GitHub UI
+    # 09:13 UTC = 11:13 CET делнично — нечетен час, избягва IP pool collision
+    # с SP500 (08:37 UTC) и с peak hours (round minutes)
+    - cron: "13 9 * * 1-5"
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -12,7 +13,7 @@ permissions:
 jobs:
   update-data:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 20  # v12 е много по-бърз от v11 (без Phase 2)
 
     steps:
       - name: Checkout repository
@@ -43,14 +44,12 @@ jobs:
           PYTHONUNBUFFERED: "1"
 
       - name: Commit and push data.json
-        # if: success() — ако skript-а exit-не с 1 (stale fallback), не commit-ваме
         if: success()
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add data.json data_meta.json
           git diff --staged --quiet && echo "No changes to commit" || (
-            git commit -m "data: momentum update $(date -u +'%Y-%m-%d %H:%M UTC')"
+            git commit -m "data: STOXX 600 momentum update $(date -u +'%Y-%m-%d %H:%M UTC')"
             git push
           )
-
