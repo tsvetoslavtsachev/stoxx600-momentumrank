@@ -1,290 +1,408 @@
-# MomentumRank STOXX Europe 600 - fetch_data.py v1
+# MomentumRank STOXX Europe 600 — fetch_data.py v12
 #
-# Fetch-ва 600-те компании на STOXX Europe 600 индекса от Wikipedia,
-# добавя Yahoo Finance суфикси по страна, изтегля 400 дни история
-# и изчислява momentum метрики идентично с S&P 500 версията.
+# Архитектура (радикално опростена спрямо v10/v11):
+#   Phase 0: Constituent discovery от iShares EXSA ETF holdings CSV
+#   Phase 1: Bulk price download (yf.download batches, curl_cffi session)
+#   Phase 1.5: Per-ticker retry с threads=False (SQLite lock recovery)
+#   Phase 2 ПРЕМАХНАТ (няма повече yfinance fundamentals fetch!)
+#   Phase 3: Metrics + scoring (size_score от iShares weight, не marketCap)
+#   Phase 4: Stale fallback за missing tickers
 #
-# Особености спрямо S&P 500 версията:
-#   - Суфикс mapping по страна (17 борси)
-#   - Пазарна капитализация се нормализира в EUR (GBp → GBP → EUR)
-#   - Добавено поле "country" и "currency" за dashboard-а
-#   - ICB сектори → GICS-style имена за съвместимост с frontend
+# Ключови промени спрямо v11:
+#   - Няма marketCap fetch → 0 HTTP заявки към yfinance за fundamentals
+#   - avgVolume се изчислява от OHLCV volumes (от Phase 1)
+#   - size_score_from_weight() замества calc на cap bracket
+#   - data.json: премахнати marketCap, marketCapSource, computed weight
+#                оставен само "weight" (authoritative от iShares)
+#
+# Общо HTTP заявки към Yahoo: ~6 (само Phase 1 batches) вместо ~620 (v10).
+# Очакван runtime: 3-5 минути вместо 18-20 минути.
 
-import json, time, random, math, sys
-from datetime import datetime, timedelta
+import json
+import math
+import os
+import random
+import sys
+import time
+from datetime import datetime, timedelta, timezone
 from io import StringIO
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 import requests
 import yfinance as yf
 
-OUTPUT_FILE   = "data.json"
+try:
+    from curl_cffi import requests as curl_requests
+    HAS_CURL_CFFI = True
+except ImportError:
+    HAS_CURL_CFFI = False
+
+# ── Config ────────────────────────────────────────────────────────────────────
+OUTPUT_FILE = "data.json"
+META_FILE = "data_meta.json"
 LOOKBACK_DAYS = 400
-RATE_SLEEP    = (0.35, 0.75)
-MAX_RETRIES   = 3
 
-# ── Yahoo Finance суфикси по страна ──────────────────────────────────────────
-COUNTRY_SUFFIX = {
-    "United Kingdom":  ".L",
-    "Germany":         ".DE",
-    "France":          ".PA",
-    "Switzerland":     ".SW",
-    "Netherlands":     ".AS",
-    "Sweden":          ".ST",
-    "Spain":           ".MC",
-    "Italy":           ".MI",
-    "Finland":         ".HE",
-    "Belgium":         ".BR",
-    "Norway":          ".OL",
-    "Denmark":         ".CO",
-    "Austria":         ".VI",
-    "Portugal":        ".LS",
-    "Ireland":         ".IR",
-    "Luxembourg":      ".LU",
-    "Poland":          ".WA",
-    "Greece":          ".AT",
-    "Israel":          ".TA",
-    "Bermuda":         ".L",    # обикновено листнати в Лондон
+ISHARES_URL = (
+    "https://www.ishares.com/de/privatanleger/de/produkte/251931/"
+    "ishares-stoxx-europe-600-ucits-etf-de-fund/1478358465952.ajax"
+    "?fileType=csv&fileName=EXSA_holdings&dataType=fund"
+)
+ISHARES_REFERER = (
+    "https://www.ishares.com/de/privatanleger/de/produkte/251931/"
+    "ishares-stoxx-europe-600-ucits-etf-de-fund"
+)
+
+BATCH_SIZE = 100
+BATCH_PAUSE = 2
+BULK_MAX_RETRIES = 3
+
+RETRY_SLEEP = 1.5
+RETRY_MAX_ATTEMPTS = 2
+
+MIN_TOTAL_RATE = 0.60
+MIN_FRESH_RATE = 0.95
+
+
+# ── Exchange → Yahoo suffix mapping (от iShares Börse column) ────────────────
+EXCHANGE_SUFFIX = {
+    "London Stock Exchange":              ".L",
+    "Xetra":                              ".DE",
+    "Frankfurt Stock Exchange":           ".F",
+    "Nyse Euronext - Euronext Paris":     ".PA",
+    "Euronext Paris":                     ".PA",
+    "SIX Swiss Exchange":                 ".SW",
+    "Euronext Amsterdam":                 ".AS",
+    "Nyse Euronext - Euronext Amsterdam": ".AS",
+    "Nasdaq Stockholm":                   ".ST",
+    "Bolsa De Madrid":                    ".MC",
+    "Borsa Italiana":                     ".MI",
+    "Nasdaq Helsinki":                    ".HE",
+    "Nyse Euronext - Euronext Brussels":  ".BR",
+    "Euronext Brussels":                  ".BR",
+    "Oslo Bors":                          ".OL",
+    "Oslo Bors Asa":                      ".OL",
+    "Nasdaq Copenhagen":                  ".CO",
+    "Wiener Boerse":                      ".VI",
+    "Euronext Lisbon":                    ".LS",
+    "Euronext Dublin":                    ".IR",
+    "Irish Stock Exchange":               ".IR",
+    "Warsaw Stock Exchange":              ".WA",
+    "Athens Stock Exchange":              ".AT",
+    "Tel Aviv Stock Exchange":            ".TA",
 }
 
-# Fallback суфикси при неуспех (опитваме в ред)
-COUNTRY_SUFFIX_FALLBACKS = {
-    "United Kingdom": [".L", ".IL"],
-    "Ireland":        [".IR", ".L", ".ID"],
-    "Luxembourg":     [".LU", ".DE", ".PA"],
-    "Switzerland":    [".SW", ".S"],     # някои на .S (SIX Exchange)
+SECTOR_DE_EN = {
+    "IT":                         "Technology",
+    "Informationstechnologie":    "Technology",
+    "Financials":                 "Financial Services",
+    "Finanzwesen":                "Financial Services",
+    "Gesundheitsversorgung":      "Healthcare",
+    "Gesundheit":                 "Healthcare",
+    "Nichtzyklische Konsumgüter": "Consumer Defensive",
+    "Basiskonsumgüter":           "Consumer Defensive",
+    "Zyklische Konsumgüter":      "Consumer Cyclical",
+    "Nicht-Basiskonsumgüter":     "Consumer Cyclical",
+    "Energie":                    "Energy",
+    "Industrie":                  "Industrials",
+    "Versorger":                  "Utilities",
+    "Grundstoffe":                "Basic Materials",
+    "Materialien":                "Basic Materials",
+    "Kommunikation":              "Communication Services",
+    "Kommunikationsdienste":      "Communication Services",
+    "Immobilien":                 "Real Estate",
+    # English pass-through
+    "Technology":                 "Technology",
+    "Healthcare":                 "Healthcare",
+    "Consumer Defensive":         "Consumer Defensive",
+    "Consumer Cyclical":          "Consumer Cyclical",
+    "Energy":                     "Energy",
+    "Industrials":                "Industrials",
+    "Utilities":                  "Utilities",
+    "Basic Materials":            "Basic Materials",
+    "Communication Services":     "Communication Services",
+    "Real Estate":                "Real Estate",
+    "Financial Services":         "Financial Services",
 }
 
-# ── ICB → GICS-style имена (за съответствие с frontend на S&P 500) ───────────
-SECTOR_MAP = {
-    "Industrial Goods and Services":        "Industrials",
-    "Industrials":                          "Industrials",
-    "Health Care":                          "Healthcare",
-    "Banks":                                "Financial Services",
-    "Financial Services":                   "Financial Services",
-    "Insurance":                            "Financial Services",
-    "Consumer Products and Services":       "Consumer Cyclical",
-    "Automobiles and Parts":                "Consumer Cyclical",
-    "Retail":                               "Consumer Cyclical",
-    "Travel and Leisure":                   "Consumer Cyclical",
-    "Media":                                "Communication Services",
-    "Telecommunications":                   "Communication Services",
-    "Technology":                           "Technology",
-    "Chemicals":                            "Basic Materials",
-    "Basic Resources":                      "Basic Materials",
-    "Construction and Materials":           "Industrials",
-    "Real Estate":                          "Real Estate",
-    "Energy":                               "Energy",
-    "Utilities":                            "Utilities",
-    "Food, Beverage and Tobacco":           "Consumer Defensive",
-    "Personal Care, Drug and Grocery Stores": "Consumer Defensive",
+COUNTRY_DE_EN = {
+    "Deutschland":            "Germany",
+    "Frankreich":             "France",
+    "Vereinigtes Königreich": "United Kingdom",
+    "Schweiz":                "Switzerland",
+    "Niederlande":            "Netherlands",
+    "Schweden":               "Sweden",
+    "Spanien":                "Spain",
+    "Italien":                "Italy",
+    "Finnland":               "Finland",
+    "Belgien":                "Belgium",
+    "Norwegen":               "Norway",
+    "Dänemark":               "Denmark",
+    "Österreich":             "Austria",
+    "Portugal":               "Portugal",
+    "Irland":                 "Ireland",
+    "Luxemburg":              "Luxembourg",
+    "Polen":                  "Poland",
+    "Griechenland":           "Greece",
+    "Israel":                 "Israel",
 }
 
 
-# ── Зареди STOXX 600 списък от Wikipedia ─────────────────────────────────────
+# ── Helpers ──────────────────────────────────────────────────────────────────
+def make_session():
+    if not HAS_CURL_CFFI:
+        return None
+    try:
+        return curl_requests.Session(impersonate="chrome")
+    except Exception as e:
+        print(f"WARN: curl_cffi session init failed: {e}")
+        return None
 
-def get_stoxx600_tickers():
-    """
-    Парсва Wikipedia STOXX Europe 600 страницата и добавя Yahoo суфикси.
-    Връща list[dict] с: symbol, name, sector, country, currency
-    """
-    url = "https://en.wikipedia.org/wiki/STOXX_Europe_600"
-    resp = requests.get(url, timeout=20, headers={"User-Agent": "MomentumRank-Bot/1.0"})
-    resp.raise_for_status()
 
-    dfs = pd.read_html(StringIO(resp.text))
-    # Таблицата с конституентите е най-голямата (~534 реда, 5 колони)
-    main_df = max(dfs, key=lambda d: len(d))
-    main_df.columns = [str(c).strip() for c in main_df.columns]
+def parse_de_number(s):
+    """'1.234,56' → 1234.56"""
+    if s is None or s == "":
+        return 0.0
+    try:
+        return float(str(s).replace(".", "").replace(",", "."))
+    except (ValueError, TypeError):
+        return 0.0
 
-    # Намери правилните колони
-    ticker_col  = next(c for c in main_df.columns if "ticker" in c.lower() or "symbol" in c.lower())
-    name_col    = next(c for c in main_df.columns if "company" in c.lower() or "name" in c.lower())
-    sector_col  = next((c for c in main_df.columns if "sector" in c.lower() or "icb" in c.lower()), None)
-    country_col = next((c for c in main_df.columns if "country" in c.lower()), None)
+
+def load_previous_data():
+    if not os.path.exists(OUTPUT_FILE):
+        return {}
+    try:
+        with open(OUTPUT_FILE, "r") as f:
+            data = json.load(f)
+        if not isinstance(data, list):
+            return {}
+        return {r["symbol"]: r for r in data if "symbol" in r}
+    except Exception as e:
+        print(f"WARN: could not load previous {OUTPUT_FILE}: {e}")
+        return {}
+
+
+# ── Phase 0: Fetch constituents from iShares ─────────────────────────────────
+def fetch_ishares_constituents():
+    print("Phase 0: Fetch constituents from iShares")
+    print("-" * 52)
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/csv,application/csv,text/plain,*/*",
+        "Accept-Language": "en-US,en;q=0.9,de;q=0.8",
+        "Referer": ISHARES_REFERER,
+    }
+
+    resp = None
+    last_exc = None
+    for attempt in range(1, 4):
+        try:
+            resp = requests.get(ISHARES_URL, headers=headers, timeout=30)
+            resp.raise_for_status()
+            print(f"  Downloaded {len(resp.text)} chars (status {resp.status_code})")
+            break
+        except Exception as e:
+            last_exc = e
+            print(f"  attempt {attempt}: {e}")
+            if attempt < 3:
+                time.sleep(3 * attempt)
+
+    if resp is None or resp.status_code != 200:
+        raise RuntimeError(f"Failed to fetch iShares CSV: {last_exc}")
+
+    lines = resp.text.strip().split("\n")
+    header_idx = None
+    for i, line in enumerate(lines):
+        if line.startswith("Emittententicker") or line.startswith('"Emittententicker"'):
+            header_idx = i
+            break
+    if header_idx is None:
+        raise RuntimeError("Could not find 'Emittententicker' header in CSV")
+
+    csv_body = "\n".join(lines[header_idx:])
+    df = pd.read_csv(StringIO(csv_body), sep=",", quotechar='"')
+    df = df[df["Anlageklasse"].str.strip() == "Aktien"].copy()
+
+    print(f"  Parsed {len(df)} equity holdings")
 
     records = []
-    for _, row in main_df.iterrows():
-        raw_ticker  = str(row[ticker_col]).strip()
-        name        = str(row[name_col]).strip()
-        raw_sector  = str(row[sector_col]).strip() if sector_col else ""
-        country     = str(row[country_col]).strip() if country_col else "Unknown"
+    skipped_exchange = 0
+    unknown_sectors = set()
 
-        if not raw_ticker or raw_ticker == "nan":
+    for _, row in df.iterrows():
+        raw_ticker = str(row["Emittententicker"]).strip().strip('"')
+        name       = str(row["Name"]).strip().strip('"')
+        sector_de  = str(row["Sektor"]).strip().strip('"')
+        country_de = str(row["Standort"]).strip().strip('"')
+        exchange   = str(row["Börse"]).strip().strip('"')
+        currency   = str(row["Marktwährung"]).strip().strip('"')
+
+        weight_pct  = parse_de_number(row["Gewichtung (%)"])
+        price_local = parse_de_number(row["Kurs"])
+
+        suffix = EXCHANGE_SUFFIX.get(exchange)
+        if suffix is None:
+            print(f"    WARN unknown exchange '{exchange}' ({raw_ticker} - {name})")
+            skipped_exchange += 1
             continue
 
-        # Добави Yahoo суфикс
-        suffix  = COUNTRY_SUFFIX.get(country, ".L")
-        # Почисти тикера: интервали → тире, специални символи
-        ticker_clean = (
-            raw_ticker
-            .replace(" ", "-")
-            .replace("/", "-")
-            .upper()
-        )
-        yahoo_sym = ticker_clean + suffix
+        sector_en = SECTOR_DE_EN.get(sector_de)
+        if sector_en is None:
+            unknown_sectors.add(sector_de)
+            sector_en = sector_de
 
-        # Нормализиран сектор
-        sector = SECTOR_MAP.get(raw_sector, raw_sector)
+        country_en = COUNTRY_DE_EN.get(country_de, country_de)
 
-        # Валута по суфикс
-        ccy_map = {
-            ".L": "GBp", ".DE": "EUR", ".PA": "EUR", ".SW": "CHF",
-            ".AS": "EUR", ".ST": "SEK", ".MC": "EUR", ".MI": "EUR",
-            ".HE": "EUR", ".BR": "EUR", ".OL": "NOK", ".CO": "DKK",
-            ".VI": "EUR", ".LS": "EUR", ".IR": "EUR", ".LU": "EUR",
-            ".WA": "PLN", ".AT": "EUR", ".TA": "ILS", ".S": "CHF",
-        }
-        currency = ccy_map.get(suffix, "EUR")
+        ticker_clean = raw_ticker.upper().replace(" ", "-").replace("/", "-")
+        yahoo_symbol = ticker_clean + suffix
 
         records.append({
-            "symbol":   yahoo_sym,
-            "raw_sym":  raw_ticker,
-            "name":     name,
-            "sector":   sector,
-            "country":  country,
-            "currency": currency,
-            "suffix":   suffix,
+            "symbol":         yahoo_symbol,
+            "raw_ticker":     raw_ticker,
+            "name":           name,
+            "sector":         sector_en,
+            "sector_de":      sector_de,
+            "country":        country_en,
+            "exchange":       exchange,
+            "currency":       currency,
+            "suffix":         suffix,
+            "price_ishares":  price_local,
+            "weight":         weight_pct,  # authoritative iShares weight
         })
 
-    print(f"  Loaded {len(records)} constituents from Wikipedia")
+    if unknown_sectors:
+        print(f"    Unknown sectors (kept raw): {sorted(unknown_sectors)}")
+    if skipped_exchange:
+        print(f"  Skipped {skipped_exchange} due to unknown exchange")
+    print(f"  Final: {len(records)} tickers ready for yfinance")
+    print()
+
     return records
 
 
-# ── EUR конверсия за пазарна капитализация ────────────────────────────────────
+# ── Phase 1.5: Retry missing ─────────────────────────────────────────────────
+def retry_missing_prices(missing_symbols, start_dt, end_dt, session=None):
+    result = {}
+    if not missing_symbols:
+        return result
 
-# Приблизителни FX курсове спрямо EUR (актуализирани периодично от скрипта)
-_FX_TO_EUR = {}
-
-def get_fx_rates():
-    """Вземи приблизителни FX курсове към EUR чрез yfinance."""
-    global _FX_TO_EUR
-    pairs = {
-        "GBp": ("GBPEUR=X", 0.01),   # GBp = GBP/100
-        "GBP": ("GBPEUR=X", 1.0),
-        "CHF": ("CHFEUR=X", 1.0),
-        "SEK": ("SEKEUR=X", 1.0),
-        "NOK": ("NOKEUR=X", 1.0),
-        "DKK": ("DKKEUR=X", 1.0),
-        "PLN": ("PLNEUR=X", 1.0),
-        "ILS": ("ILSEUR=X", 1.0),
-        "EUR": (None,        1.0),
-        "USD": ("USDEUR=X", 1.0),
-    }
-    rates = {"EUR": 1.0}
-    for ccy, (pair, scale) in pairs.items():
-        if pair is None:
-            rates[ccy] = 1.0
-            continue
-        try:
-            t   = yf.Ticker(pair)
-            fx  = getattr(t.fast_info, "last_price", None) or getattr(t.fast_info, "regular_market_price", None)
-            if fx and fx > 0:
-                rates[ccy] = float(fx) * scale
-        except Exception:
-            pass
-    # Fallback defaults ако API не отговаря
-    defaults = {"GBp": 0.01176, "GBP": 1.176, "CHF": 1.048, "SEK": 0.0873,
-                "NOK": 0.0856, "DKK": 0.134, "PLN": 0.232, "ILS": 0.248}
-    for ccy, val in defaults.items():
-        if ccy not in rates or rates[ccy] <= 0:
-            rates[ccy] = val
-    _FX_TO_EUR = rates
-    return rates
-
-def to_eur(value, currency):
-    rate = _FX_TO_EUR.get(currency, 1.0)
-    return value * rate
-
-
-# ── Fetch данни за един тикер ─────────────────────────────────────────────────
-
-def fetch_ticker_data(info, start_dt, end_dt):
-    """
-    Опитва primary суфикс. При неуспех опитва fallback суфикси.
-    Връща (prices, volumes, market_cap_eur, avg_volume, used_symbol, currency)
-    """
-    country = info.get("country", "")
-    base    = info["raw_sym"].replace(" ", "-").replace("/", "-").upper()
-    suffix  = info["suffix"]
-    primary = base + suffix
-
-    # Списък с тикери за опитване
-    candidates = [primary]
-    for fb in COUNTRY_SUFFIX_FALLBACKS.get(country, []):
-        alt = base + fb
-        if alt != primary:
-            candidates.append(alt)
-
-    for symbol in candidates:
-        result = _try_fetch(symbol, start_dt, end_dt, info.get("currency", "EUR"))
-        if result is not None:
-            return result + (symbol,)
-
-    return None, None, 0, 0, primary
-
-
-def _try_fetch(symbol, start_dt, end_dt, currency):
-    for attempt in range(1, MAX_RETRIES + 1):
-        try:
-            ticker = yf.Ticker(symbol)
-            hist   = ticker.history(
-                start=start_dt.strftime("%Y-%m-%d"),
-                end=end_dt.strftime("%Y-%m-%d"),
-                auto_adjust=True,
-                actions=False,
-            )
-            if hist.empty or len(hist) < 60:
-                return None
-
-            prices  = hist["Close"].dropna().astype(float)
-            volumes = hist["Volume"].fillna(0).astype(float)
-
-            # Пазарна капитализация
-            market_cap_local = 0
-            avg_volume       = 0
-            actual_currency  = currency
-
+    print(f"  Retry phase: {len(missing_symbols)} tickers (threads=False)")
+    for sym in missing_symbols:
+        for attempt in range(1, RETRY_MAX_ATTEMPTS + 1):
             try:
-                fi = ticker.fast_info
-                market_cap_local = float(getattr(fi, "market_cap", 0) or 0)
-                avg_volume       = int(getattr(fi, "three_month_average_volume", 0) or 0)
-                actual_currency  = getattr(fi, "currency", currency) or currency
-            except Exception:
-                pass
+                time.sleep(RETRY_SLEEP + random.uniform(0, 0.5))
+                data = yf.download(
+                    tickers=[sym],
+                    start=start_dt.strftime("%Y-%m-%d"),
+                    end=end_dt.strftime("%Y-%m-%d"),
+                    auto_adjust=True,
+                    actions=False,
+                    progress=False,
+                    threads=False,
+                    session=session,
+                )
+                if data.empty:
+                    continue
 
-            # Fallback volume от история
-            if avg_volume == 0 and len(volumes) > 0:
-                lb = volumes.iloc[-63:] if len(volumes) >= 63 else volumes
-                avg_volume = int(lb[lb > 0].mean()) if (lb > 0).any() else 0
+                if isinstance(data.columns, pd.MultiIndex):
+                    if (sym, "Close") in data.columns:
+                        prices = data[(sym, "Close")].dropna().astype(float)
+                        volumes = data[(sym, "Volume")].fillna(0).astype(float)
+                    else:
+                        continue
+                else:
+                    if "Close" not in data.columns:
+                        continue
+                    prices = data["Close"].dropna().astype(float)
+                    volumes = data["Volume"].fillna(0).astype(float)
 
-            # Fallback cap от .info
-            if market_cap_local == 0:
-                try:
-                    inf = ticker.info
-                    market_cap_local = float(inf.get("marketCap", 0) or 0)
-                    actual_currency  = inf.get("currency", currency) or currency
-                    if avg_volume == 0:
-                        avg_volume = int(inf.get("averageDailyVolume3Month", 0) or inf.get("averageVolume", 0) or 0)
-                except Exception:
-                    pass
+                if len(prices) >= 60:
+                    result[sym] = {"prices": prices, "volumes": volumes}
+                    print(f"    ✓ recovered {sym}")
+                    break
+            except Exception as e:
+                if attempt >= RETRY_MAX_ATTEMPTS:
+                    print(f"    ✗ {sym}: {e}")
 
-            # Конвертирай market cap в EUR
-            market_cap_eur = int(to_eur(market_cap_local, actual_currency))
-
-            return prices, volumes, market_cap_eur, avg_volume
-
-        except Exception as e:
-            if attempt < MAX_RETRIES:
-                time.sleep(2 ** attempt + random.uniform(0, 1))
-            else:
-                return None
-    return None
+    return result
 
 
-# ── Изчисления ────────────────────────────────────────────────────────────────
+# ── Phase 1: Bulk price download ─────────────────────────────────────────────
+def bulk_download_prices(records, start_dt, end_dt, session=None):
+    result = {}
+    symbols = [r["symbol"] for r in records]
 
+    for i in range(0, len(symbols), BATCH_SIZE):
+        batch = symbols[i : i + BATCH_SIZE]
+        batch_num = i // BATCH_SIZE + 1
+        total_batches = (len(symbols) + BATCH_SIZE - 1) // BATCH_SIZE
+        print(f"  Batch {batch_num}/{total_batches}: {len(batch)} tickers...",
+              flush=True)
+
+        data = pd.DataFrame()
+        for attempt in range(1, BULK_MAX_RETRIES + 1):
+            try:
+                data = yf.download(
+                    tickers=batch,
+                    start=start_dt.strftime("%Y-%m-%d"),
+                    end=end_dt.strftime("%Y-%m-%d"),
+                    auto_adjust=True,
+                    actions=False,
+                    progress=False,
+                    group_by="ticker",
+                    threads=True,
+                    session=session,
+                )
+                break
+            except Exception as e:
+                if attempt < BULK_MAX_RETRIES:
+                    wait = 2 ** attempt + random.uniform(0, 1)
+                    print(f"    retry {attempt}: {e} (wait {wait:.1f}s)")
+                    time.sleep(wait)
+                else:
+                    print(f"    FAILED batch {batch_num}: {e}")
+
+        if data.empty:
+            continue
+
+        for sym in batch:
+            try:
+                if isinstance(data.columns, pd.MultiIndex):
+                    if (sym, "Close") not in data.columns:
+                        continue
+                    prices = data[(sym, "Close")].dropna().astype(float)
+                    volumes = data[(sym, "Volume")].fillna(0).astype(float)
+                else:
+                    if len(batch) != 1 or "Close" not in data.columns:
+                        continue
+                    prices = data["Close"].dropna().astype(float)
+                    volumes = data["Volume"].fillna(0).astype(float)
+
+                if len(prices) >= 60:
+                    result[sym] = {"prices": prices, "volumes": volumes}
+            except Exception as e:
+                print(f"    WARN {sym}: extract failed: {e}")
+
+        if i + BATCH_SIZE < len(symbols):
+            time.sleep(BATCH_PAUSE)
+
+    missing = [r["symbol"] for r in records if r["symbol"] not in result]
+    recovered = 0
+    if missing:
+        retry_result = retry_missing_prices(missing, start_dt, end_dt, session=session)
+        result.update(retry_result)
+        recovered = len(retry_result)
+
+    return result, recovered
+
+
+# ── Metrics ──────────────────────────────────────────────────────────────────
 def calc_return(prices, trading_days):
     if prices is None or len(prices) < trading_days + 1:
         return 0.0
@@ -301,7 +419,7 @@ def calc_volatility(prices, trading_days=252):
 
 
 def calc_sharpe(prices, trading_days=252, rf=0.025):
-    """rf = 2.5% (приблизителен 10Y Bund yield)"""
+    """rf=2.5% ≈ 10Y Bund yield."""
     if prices is None or len(prices) < 22:
         return 0.0
     rets = np.log(prices / prices.shift(1)).dropna()
@@ -317,74 +435,98 @@ def calc_sharpe(prices, trading_days=252, rf=0.025):
 def calc_drawdown(prices):
     if prices is None or len(prices) < 2:
         return 0.0
-    roll_max  = prices.expanding().max()
+    roll_max = prices.expanding().max()
     dd_series = (prices - roll_max) / roll_max * 100
     return round(float(dd_series.min()), 2)
 
 
-def calc_momentum_score(r1m, r3m, r6m, r12m, vol, sharpe, market_cap_eur):
-    def sig(x, scale):
-        return 100.0 / (1.0 + math.exp(max(-50, min(50, -x / scale))))
+def size_score_from_weight(weight_pct):
+    """
+    iShares weight → size score [0-100].
+    Brackets:
+      >= 2.0%  → 100 (mega, ~3-5 companies like ASML, HSBC, AstraZeneca)
+      >= 1.0%  →  75 (large, ~15-20 companies)
+      >= 0.3%  →  50 (mid, ~120-140 companies)
+      >  0%    →  25 (small-cap tail, ~400+ companies)
+       = 0     →  50 (defensive neutral)
+    """
+    if weight_pct >= 2.0:
+        return 100
+    elif weight_pct >= 1.0:
+        return 75
+    elif weight_pct >= 0.3:
+        return 50
+    elif weight_pct > 0:
+        return 25
+    else:
+        return 50
 
-    s12  = sig(r12m, 30)
-    s6   = sig(r6m,  20)
-    s3   = sig(r3m,  15)
-    s1   = sig(r1m,  10)
+
+def calc_momentum_score(r1m, r3m, r6m, r12m, vol, sharpe, weight_pct):
+    def sig(x, scale):
+        exp_arg = max(-50, min(50, -x / scale))
+        return 100.0 / (1.0 + math.exp(exp_arg))
+
+    s12 = sig(r12m, 30)
+    s6 = sig(r6m, 20)
+    s3 = sig(r3m, 15)
+    s1 = sig(r1m, 10)
     s_sh = sig(sharpe, 1.0)
     s_vol = 100.0 / (1.0 + math.exp(max(-50, min(50, (vol - 25) / 10))))
-
-    # Market cap thresholds в EUR
-    if   market_cap_eur >= 200e9: s_cap = 100
-    elif market_cap_eur >=  50e9: s_cap = 75
-    elif market_cap_eur >=  10e9: s_cap = 50
-    elif market_cap_eur >       0: s_cap = 25
-    else:                          s_cap = 50
+    s_size = size_score_from_weight(weight_pct)
 
     return round(
-        s12  * 0.30 + s6   * 0.25 + s3    * 0.20 + s1    * 0.10 +
-        s_sh * 0.10 + s_vol * 0.03 + s_cap * 0.02,
+        s12 * 0.30 + s6 * 0.25 + s3 * 0.20 + s1 * 0.10
+        + s_sh * 0.10 + s_vol * 0.03 + s_size * 0.02,
         1,
     )
 
 
-# ── Обработка на един тикер ───────────────────────────────────────────────────
-
-def process_ticker(info, start_dt, end_dt):
-    time.sleep(random.uniform(*RATE_SLEEP))
-
-    prices, volumes, market_cap_eur, avg_volume, used_sym = fetch_ticker_data(
-        info, start_dt, end_dt
-    )
-
+# ── Process single ticker ────────────────────────────────────────────────────
+def process_ticker(info, prices, volumes):
+    sym = info["symbol"]
     if prices is None or len(prices) < 60:
         return None
 
-    r1m  = calc_return(prices, 21)
-    r3m  = calc_return(prices, 63)
-    r6m  = calc_return(prices, 126)
+    # avgVolume изцяло от OHLCV volumes (не от yfinance.info)
+    avg_volume = 0
+    if volumes is not None and len(volumes) > 0:
+        lookback_vol = volumes.iloc[-63:] if len(volumes) >= 63 else volumes
+        if (lookback_vol > 0).any():
+            avg_volume = int(lookback_vol[lookback_vol > 0].mean())
+
+    weight_pct = info["weight"]
+
+    r1m = calc_return(prices, 21)
+    r3m = calc_return(prices, 63)
+    r6m = calc_return(prices, 126)
     r12m = calc_return(prices, 252)
-    vol  = calc_volatility(prices)
-    shp  = calc_sharpe(prices)
-    dd   = calc_drawdown(prices)
+    vol = calc_volatility(prices)
+    shp = calc_sharpe(prices)
+    dd = calc_drawdown(prices)
 
-    price   = round(float(prices.iloc[-1]), 4)
-    day_chg = round((prices.iloc[-1] / prices.iloc[-2] - 1) * 100, 2) if len(prices) >= 2 else 0.0
+    price = round(float(prices.iloc[-1]), 4)
+    day_chg = (
+        round((prices.iloc[-1] / prices.iloc[-2] - 1) * 100, 2)
+        if len(prices) >= 2 else 0.0
+    )
 
-    p52    = prices.iloc[-252:] if len(prices) >= 252 else prices
+    p52 = prices.iloc[-252:] if len(prices) >= 252 else prices
     high52 = round(float(p52.max()), 4)
-    low52  = round(float(p52.min()), 4)
-    dd52   = round((price - high52) / high52 * 100, 2) if high52 > 0 else 0.0
+    low52 = round(float(p52.min()), 4)
+    dd52 = round((price - high52) / high52 * 100, 2) if high52 > 0 else 0.0
 
-    score = calc_momentum_score(r1m, r3m, r6m, r12m, vol, shp, market_cap_eur)
+    score = calc_momentum_score(r1m, r3m, r6m, r12m, vol, shp, weight_pct)
 
     return {
-        "symbol":        used_sym,
+        "symbol":        sym,
         "name":          info["name"],
         "sector":        info["sector"],
         "country":       info["country"],
+        "exchange":      info["exchange"],
         "currency":      info["currency"],
         "price":         price,
-        "marketCap":     market_cap_eur,   # в EUR
+        "weight":        round(weight_pct, 4),  # authoritative iShares weight
         "return12m":     r12m,
         "return6m":      r6m,
         "return3m":      r3m,
@@ -398,102 +540,164 @@ def process_ticker(info, start_dt, end_dt):
         "low52w":        low52,
         "drawdown52w":   dd52,
         "momentumScore": score,
-        "weight":        0.0,  # попълва се в main()
+        "stale":         False,
     }
 
 
-# ── Main ──────────────────────────────────────────────────────────────────────
+def build_stale_record(prev_record, current_info):
+    rec = dict(prev_record)
+    rec["name"] = current_info["name"]
+    rec["sector"] = current_info["sector"]
+    rec["country"] = current_info["country"]
+    rec["exchange"] = current_info["exchange"]
+    rec["weight"] = round(current_info["weight"], 4)
+    rec["stale"] = True
 
+    # Премахни legacy полета ако ги има в старата data.json (от v10/v11)
+    for legacy_key in ("marketCap", "marketCapSource", "iSharesWeight"):
+        rec.pop(legacy_key, None)
+
+    return rec
+
+
+# ── Main ──────────────────────────────────────────────────────────────────────
 def main():
-    print("MomentumRank - STOXX Europe 600 - fetch_data.py v1")
+    print("MomentumRank STOXX Europe 600 — fetch_data.py v12")
     print("=" * 55)
 
-    end_dt   = datetime.utcnow()
+    if not HAS_CURL_CFFI:
+        print("WARN: curl_cffi not installed — Yahoo rate limit risk")
+
+    end_dt = datetime.now(timezone.utc)
     start_dt = end_dt - timedelta(days=LOOKBACK_DAYS)
     print(f"Period : {start_dt.date()} → {end_dt.date()}")
 
-    # FX rates
-    print("Fetching FX rates...")
-    rates = get_fx_rates()
-    print(f"  GBp={rates.get('GBp'):.5f}  CHF={rates.get('CHF'):.4f}  "
-          f"SEK={rates.get('SEK'):.5f}  NOK={rates.get('NOK'):.5f}  "
-          f"DKK={rates.get('DKK'):.5f}")
-
-    print("Loading STOXX 600 list from Wikipedia...")
-    tickers = get_stoxx600_tickers()
-    print(f"  {len(tickers)} tickers loaded")
+    prev_data = load_previous_data()
+    if prev_data:
+        print(f"Prev   : {len(prev_data)} records available for fallback")
     print()
 
+    # Phase 0
+    records = fetch_ishares_constituents()
+    if len(records) < 500:
+        print(f"ERROR: only {len(records)} constituents — aborting")
+        sys.exit(2)
+
+    ticker_info_map = {r["symbol"]: r for r in records}
+
+    session = make_session()
+    if session:
+        print("Session: curl_cffi Chrome-impersonation ENABLED")
+    else:
+        print("Session: default requests (higher rate-limit risk)")
+    print()
+
+    # Phase 1 + 1.5
+    print("Phase 1: Bulk price download (+ retry)")
+    print("-" * 52)
+    price_data, retry_recovered = bulk_download_prices(
+        records, start_dt, end_dt, session=session
+    )
+    print(f"  Got prices for {len(price_data)} / {len(records)} tickers")
+    if retry_recovered:
+        print(f"  Retry recovered: {retry_recovered}")
+    print()
+
+    # Phase 3: Metrics (no separate Phase 2!)
+    print("Phase 3: Metrics & momentum score")
+    print("-" * 52)
     results = []
-    skipped = []
-    total   = len(tickers)
-
-    for i, t in enumerate(tickers, 1):
-        sym = t["symbol"]
-        print(f"  [{i:3d}/{total}] {sym:<16}", end="", flush=True)
-
-        rec = process_ticker(t, start_dt, end_dt)
-
+    for r in records:
+        sym = r["symbol"]
+        if sym not in price_data:
+            continue
+        prices = price_data[sym]["prices"]
+        volumes = price_data[sym]["volumes"]
+        rec = process_ticker(r, prices, volumes)
         if rec:
             results.append(rec)
-            cap_b = rec["marketCap"] / 1e9 if rec["marketCap"] else 0
-            vol_m = rec["avgVolume"] / 1e6 if rec["avgVolume"] else 0
-            print(
-                f"  score={rec['momentumScore']:.1f}"
-                f"  r12m={rec['return12m']:+.1f}%"
-                f"  vol={vol_m:.1f}M"
-                f"  cap=€{cap_b:.1f}B"
-                f"  [{rec['country'][:3]}]"
-            )
-        else:
-            skipped.append(sym)
-            print("  SKIPPED")
+    fresh_count = len(results)
+    print(f"  Fresh records: {fresh_count}")
+    print()
 
-        if i % 50 == 0:
-            print(f"  --- checkpoint {i}/{total} ---")
-            time.sleep(3)
+    # Phase 4: Stale fallback
+    current_symbols = {r["symbol"] for r in records}
+    fresh_symbols = {x["symbol"] for x in results}
+    missing_symbols = current_symbols - fresh_symbols
+    stale_used = []
 
-    # Нормализирай weight = % от общ market cap в EUR
-    total_cap = sum(r["marketCap"] for r in results if r["marketCap"] > 0)
-    for r in results:
-        if total_cap > 0 and r["marketCap"] > 0:
-            r["weight"] = round(r["marketCap"] / total_cap * 100, 4)
-        else:
-            r["weight"] = 0.0
+    for sym in missing_symbols:
+        if sym in prev_data:
+            stale_rec = build_stale_record(prev_data[sym], ticker_info_map[sym])
+            results.append(stale_rec)
+            stale_used.append(sym)
 
-    # Сортирай и добави rank
+    if stale_used:
+        print(f"  Stale fallback used: {len(stale_used)} records")
+        print(f"    Symbols: {', '.join(stale_used[:10])}"
+              + (f" ... +{len(stale_used) - 10}" if len(stale_used) > 10 else ""))
+
+    truly_missing = missing_symbols - set(stale_used)
+    if truly_missing:
+        print(f"  WARN: {len(truly_missing)} tickers без никакви данни")
+        print(f"    Symbols: {', '.join(list(truly_missing)[:10])}")
+    print()
+
+    # Sort by momentum score, assign rank
     results.sort(key=lambda x: x["momentumScore"], reverse=True)
     for rank, r in enumerate(results, 1):
         r["rank"] = rank
 
-    # Запази data.json (директен масив — съвместимост с index.html)
+    # Meta
+    total_count = len(results)
+    fresh_rate = fresh_count / len(records) if records else 0
+    total_rate = total_count / len(records) if records else 0
+
+    meta = {
+        "updated":         end_dt.strftime("%Y-%m-%d %H:%M UTC"),
+        "source":          "iShares EXSA + yfinance",
+        "count":           total_count,
+        "fresh_count":     fresh_count,
+        "stale_count":     len(stale_used),
+        "missing_count":   len(truly_missing),
+        "retry_recovered": retry_recovered,
+        "fresh_rate":      round(fresh_rate, 4),
+        "total_rate":      round(total_rate, 4),
+        "vol_ok":          sum(1 for r in results if r["avgVolume"] > 0),
+        "stale":           False,
+        "warnings":        [],
+    }
+
+    if fresh_rate < MIN_FRESH_RATE:
+        warn = (f"Only {fresh_count}/{len(records)} fresh "
+                f"({fresh_rate:.1%} < {MIN_FRESH_RATE:.0%})")
+        meta["warnings"].append(warn)
+        print(f"WARN: {warn}")
+
+    if total_rate < MIN_TOTAL_RATE and prev_data:
+        print(f"HARD FAIL: only {total_count} records — keeping previous data.json")
+        meta["stale"] = True
+        meta["stale_reason"] = f"fetch returned {total_count}/{len(records)}"
+        with open(META_FILE, "w") as f:
+            json.dump(meta, f, indent=2)
+        sys.exit(1)
+
     with open(OUTPUT_FILE, "w") as f:
         json.dump(results, f, separators=(",", ":"))
-
-    # Meta файл за debugging
-    meta = {
-        "updated":  datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC"),
-        "count":    len(results),
-        "skipped":  len(skipped),
-        "vol_ok":   sum(1 for r in results if r["avgVolume"] > 0),
-        "cap_ok":   sum(1 for r in results if r["marketCap"] > 0),
-        "skipped_list": skipped[:30],
-    }
-    with open("data_meta.json", "w") as f:
+    with open(META_FILE, "w") as f:
         json.dump(meta, f, indent=2)
 
     print()
-    print(f"Done         : {len(results)} records → {OUTPUT_FILE}")
-    print(f"Skipped      : {len(skipped)}")
-    print(f"avgVolume OK : {meta['vol_ok']}/{len(results)}")
-    print(f"marketCap OK : {meta['cap_ok']}/{len(results)}")
-    print(f"Top 5        : {[r['symbol'] for r in results[:5]]}")
-    print(f"Updated      : {meta['updated']}")
+    print(f"Done          : {total_count} records → {OUTPUT_FILE}")
+    print(f"  fresh       : {fresh_count} ({fresh_rate:.1%})")
+    print(f"  stale       : {len(stale_used)}")
+    print(f"  missing     : {len(truly_missing)}")
+    print(f"avgVolume OK  : {meta['vol_ok']}/{total_count}")
+    print(f"Top 5         : {[r['symbol'] for r in results[:5]]}")
+    print(f"Updated       : {meta['updated']}")
 
-    if meta["vol_ok"] < len(results) * 0.75:
-        print("WARNING: >25% missing avgVolume")
-        sys.exit(1)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main() or 0)
