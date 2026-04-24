@@ -198,7 +198,7 @@ body {
 .col-vol     { width: 48px; }
 .col-sharpe  { width: 48px; }
 .col-avgvol  { width: 54px; }
-.col-mcap    { width: 62px; }
+.col-weight  { width: 54px; }
 .col-dd      { width: 50px; }
 .col-score   { width: 84px; }
 
@@ -361,9 +361,9 @@ body {
     </div>
 
     <div class="filter-group">
-      <span class="filter-label">Cap</span>
+      <span class="filter-label">Size</span>
       <div class="multi-select">
-        <button class="multi-select-btn" id="cap-btn">All Caps</button>
+        <button class="multi-select-btn" id="cap-btn">All Sizes</button>
         <div class="multi-select-dropdown" id="cap-dropdown"></div>
       </div>
     </div>
@@ -433,7 +433,7 @@ body {
               <th class="col-vol num" data-sort="volatility">Vol <span class="sort-arrow">▲</span></th>
               <th class="col-sharpe num" data-sort="sharpe">Sharpe <span class="sort-arrow">▲</span></th>
               <th class="col-avgvol num" data-sort="avgVolume">Avg Vol <span class="sort-arrow">▲</span></th>
-              <th class="col-mcap num" data-sort="marketCap">Mkt Cap <span class="sort-arrow">▲</span></th>
+              <th class="col-weight num" data-sort="weight">Weight <span class="sort-arrow">▲</span></th>
               <th class="col-dd num" data-sort="drawdown">DD <span class="sort-arrow">▲</span></th>
               <th class="col-score" data-sort="momentumScore">Score <span class="sort-arrow">▲</span></th>
             </tr>
@@ -504,7 +504,8 @@ body {
     'Consumer Defensive', 'Energy', 'Financial Services', 'Healthcare',
     'Industrials', 'Real Estate', 'Technology', 'Utilities'
   ];
-  const CAP_LABELS = ['Mega (>200B)', 'Large (50-200B)', 'Mid (10-50B)', 'Small (<10B)'];
+  const SIZE_LABELS = ['Top 10 largest', 'Top 50 largest', 'Top 100 largest', 'Below Top 100'];
+  let weightRankMap = new Map();
   const PIE_COLORS = ['#1a7f5a','#3b82f6','#e05252','#d4a017','#8b5cf6','#ec4899','#f97316','#14b8a6','#6366f1','#84cc16','#f43f5e'];
 
   // Country ISO-2 codes for flag emoji
@@ -566,20 +567,26 @@ body {
     if (v >= 1e3) return (v / 1e3).toFixed(0) + 'K';
     return v.toString();
   }
-  function fmtCap(v) {
-    // marketCap in EUR
-    if (!v) return '—';
-    if (v >= 1e12) return '€' + (v / 1e12).toFixed(2) + 'T';
-    if (v >= 1e9)  return '€' + (v / 1e9).toFixed(1) + 'B';
-    if (v >= 1e6)  return '€' + (v / 1e6).toFixed(0) + 'M';
-    return '€' + v.toFixed(0);
+  function fmtWeight(v) {
+    // iShares weight (%)
+    if (!v || v === 0) return '—';
+    if (v >= 1) return v.toFixed(2) + '%';
+    return v.toFixed(3) + '%';
+  }
+
+  function buildWeightRankMap() {
+    weightRankMap.clear();
+    const sorted = [...allData].sort((a, b) => (b.weight || 0) - (a.weight || 0));
+    sorted.forEach((d, i) => weightRankMap.set(d.symbol, i + 1));
   }
   function retColor(v) { if (v > 0) return 'text-green'; if (v < 0) return 'text-red'; return 'text-muted'; }
-  function getCapCategory(cap) {
-    if (cap >= 200e9) return 'Mega (>200B)';
-    if (cap >= 50e9)  return 'Large (50-200B)';
-    if (cap >= 10e9)  return 'Mid (10-50B)';
-    return 'Small (<10B)';
+  function getSizeCategory(symbol) {
+    const rank = weightRankMap.get(symbol);
+    if (!rank) return 'Below Top 100';
+    if (rank <= 10)  return 'Top 10 largest';
+    if (rank <= 50)  return 'Top 50 largest';
+    if (rank <= 100) return 'Top 100 largest';
+    return 'Below Top 100';
   }
   function scoreColor(s) {
     if (s >= 70) return '#2ea87a';
@@ -633,7 +640,7 @@ body {
   }
 
   function initCapDropdown() {
-    dom.capDropdown.innerHTML = CAP_LABELS.map(s =>
+    dom.capDropdown.innerHTML = SIZE_LABELS.map(s =>
       `<label class="multi-select-item"><input type="checkbox" value="${s}"> ${s}</label>`
     ).join('');
     dom.capDropdown.querySelectorAll('input').forEach(cb => {
@@ -646,7 +653,7 @@ body {
 
   function updateSectorBtnText()  { dom.sectorBtn.textContent  = sectorFilters.size  === 0 ? 'All Sectors'   : sectorFilters.size  + ' Sectors'; }
   function updateCountryBtnText() { dom.countryBtn.textContent = countryFilters.size === 0 ? 'All Countries' : countryFilters.size + ' Countries'; }
-  function updateCapBtnText()     { dom.capBtn.textContent     = capFilters.size     === 0 ? 'All Caps'      : capFilters.size     + ' Caps'; }
+  function updateCapBtnText()     { dom.capBtn.textContent     = capFilters.size     === 0 ? 'All Sizes'     : capFilters.size     + ' Sizes'; }
 
   function setupDropdownToggle(btn, dropdown) {
     btn.addEventListener('click', (e) => {
@@ -702,7 +709,7 @@ body {
       if (search && !d.symbol.toLowerCase().includes(search) && !d.name.toLowerCase().includes(search) && !(d.country||'').toLowerCase().includes(search)) return false;
       if (sectorFilters.size  > 0 && !sectorFilters.has(d.sector))          return false;
       if (countryFilters.size > 0 && !countryFilters.has(d.country))        return false;
-      if (capFilters.size     > 0 && !capFilters.has(getCapCategory(d.marketCap))) return false;
+      if (capFilters.size     > 0 && !capFilters.has(getSizeCategory(d.symbol))) return false;
       if (d.return12m  < retMin   || d.return12m  > retMax)   return false;
       if (d.volatility < volMin   || d.volatility > volMax)   return false;
       if (d.momentumScore < scoreMin) return false;
@@ -750,7 +757,7 @@ body {
         <td class="num">${d.volatility.toFixed(1)}%</td>
         <td class="num">${d.sharpe.toFixed(2)}</td>
         <td class="num">${fmtVol(d.avgVolume)}</td>
-        <td class="num">${fmtCap(d.marketCap)}</td>
+        <td class="num">${fmtWeight(d.weight)}</td>
         <td class="num ${d.drawdown < -0.05 ? 'text-red' : 'text-muted'}">${d.drawdown.toFixed(1)}%</td>
         <td><div class="score-cell"><div class="score-bar-track"><div class="score-bar-fill" style="width:${d.momentumScore}%;background:${scoreColor(d.momentumScore)}"></div></div><span class="score-val">${d.momentumScore.toFixed(1)}</span></div></td>
       </tr>`;
@@ -926,12 +933,13 @@ body {
   function exportPortfolioXlsx() {
     const items = allData.filter(d => selectedSymbols.has(d.symbol));
     if (!items.length) { alert('Select stocks first using the checkboxes.'); return; }
-    const headers = ['Rank','Symbol','Name','Sector','Country','Price','12M Return (%)','6M Return (%)','3M Return (%)','1M Return (%)','Volatility (%)','Sharpe','Avg Volume','Market Cap (€)','Drawdown (%)','Momentum Score','Weight (%)'];
+    const headers = ['Rank','Symbol','Name','Sector','Country','Price','12M Return (%)','6M Return (%)','3M Return (%)','1M Return (%)','Volatility (%)','Sharpe','Avg Volume','Index Weight (%)','Drawdown (%)','Momentum Score','Portfolio Weight (%)'];
+    const portfWeight = items.length > 0 ? 100.0 / items.length : 0;
     const rows = items.map((d, i) => [
       i + 1, d.symbol, d.name, d.sector, d.country || '',
       d.price, d.return12m, d.return6m, d.return3m, d.return1m,
-      d.volatility, d.sharpe, d.avgVolume, d.marketCap,
-      d.drawdown, d.momentumScore, d.weight || 0
+      d.volatility, d.sharpe, d.avgVolume, d.weight || 0,
+      d.drawdown, d.momentumScore, portfWeight
     ]);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, buildWorksheet(rows, headers), 'Portfolio');
@@ -940,13 +948,13 @@ body {
 
   function exportTableXlsx() {
     if (!filteredData.length) { alert('No data to export.'); return; }
-    const headers = ['Rank','Symbol','Name','Sector','Country','Price','12M Ret (%)','6M Ret (%)','3M Ret (%)','1M Ret (%)','Volatility (%)','Sharpe','Avg Volume (M)','Market Cap (€B)','Drawdown (%)','Momentum Score'];
+    const headers = ['Rank','Symbol','Name','Sector','Country','Price','12M Ret (%)','6M Ret (%)','3M Ret (%)','1M Ret (%)','Volatility (%)','Sharpe','Avg Volume (M)','Index Weight (%)','Drawdown (%)','Momentum Score'];
     const rows = filteredData.map((d, i) => [
       i + 1, d.symbol, d.name, d.sector, d.country || '',
       d.price, d.return12m, d.return6m, d.return3m, d.return1m,
       d.volatility, d.sharpe,
       d.avgVolume > 0 ? +(d.avgVolume / 1e6).toFixed(2) : 0,
-      d.marketCap  > 0 ? +(d.marketCap  / 1e9).toFixed(2) : 0,
+      d.weight || 0,
       d.drawdown, d.momentumScore
     ]);
     const wb = XLSX.utils.book_new();
@@ -1072,6 +1080,8 @@ body {
       dom.tbody.innerHTML = '<tr><td colspan="17" class="no-results">Error loading data.json</td></tr>';
       return;
     }
+
+    buildWeightRankMap();
 
     // Date display: data_meta.json → Last-Modified → today
     try {
