@@ -1,10 +1,10 @@
-name: Update STOXX 600 MomentumRank Data
+name: Update MomentumRank Data
 
 on:
   schedule:
-    # Всеки делничен ден в 08:00 UTC (11:00 EEST) — след отваряне на Европа
-    - cron: "0 8 * * 1-5"
-  workflow_dispatch:
+    # Всеки делничен ден в 07:30 UTC (10:30 EEST) — след отваряне на пазара
+    - cron: "37 8 * * 1-5"
+  workflow_dispatch: # ръчно стартиране от GitHub UI
 
 permissions:
   contents: write
@@ -12,7 +12,7 @@ permissions:
 jobs:
   update-data:
     runs-on: ubuntu-latest
-    timeout-minutes: 60   # 600 тикера × ~5 сек = ~50 мин
+    timeout-minutes: 40
 
     steps:
       - name: Checkout repository
@@ -30,6 +30,7 @@ jobs:
           pip install --upgrade pip
           pip install \
             "yfinance>=0.2.55" \
+            "curl_cffi>=0.7" \
             "pandas>=2.0" \
             "numpy>=1.24" \
             "requests>=2.31" \
@@ -42,11 +43,14 @@ jobs:
           PYTHONUNBUFFERED: "1"
 
       - name: Commit and push data.json
+        # if: success() — ако skript-а exit-не с 1 (stale fallback), не commit-ваме
+        if: success()
         run: |
-          git config user.name  "github-actions[bot]"
+          git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add data.json data_meta.json
           git diff --staged --quiet && echo "No changes to commit" || (
-            git commit -m "data: STOXX 600 momentum update $(date -u +'%Y-%m-%d %H:%M UTC')"
+            git commit -m "data: momentum update $(date -u +'%Y-%m-%d %H:%M UTC')"
             git push
           )
+
