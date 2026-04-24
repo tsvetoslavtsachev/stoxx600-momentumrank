@@ -3,7 +3,7 @@ name: Update MomentumRank Data
 on:
   schedule:
     # Всеки делничен ден в 07:30 UTC (10:30 EEST) — след отваряне на пазара
-    - cron: "37 8 * * 1-5"
+    - cron: "0 8 * * 1-5"
   workflow_dispatch: # ръчно стартиране от GitHub UI
 
 permissions:
