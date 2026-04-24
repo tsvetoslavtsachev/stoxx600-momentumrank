@@ -127,6 +127,20 @@ COUNTRY_SUFFIX_FALLBACK = {
     "Luxembourg":     ".LU",
 }
 
+# Ticker overrides: известни несъвпадения между iShares и Yahoo.
+# Ключ = Yahoo suffix (напр. ".SW"), стойност = dict от {iShares ticker: Yahoo ticker}.
+# Добавяй само след ръчна проверка че Yahoo-тикера работи.
+TICKER_OVERRIDES_BY_EXCHANGE = {
+    ".SW": {
+        # Roche Holding Genussschein: iShares "ROP" vs Yahoo "ROG"
+        "ROP": "ROG",
+    },
+    ".L": {
+        # BT Group Class A: iShares "BT-A" (след middle-dot conversion) vs Yahoo "BT-A"
+        # (тук override не е нужен, dash-conversion вече го прави)
+    },
+}
+
 SECTOR_DE_EN = {
     "IT":                         "Technology",
     "Informationstechnologie":    "Technology",
@@ -305,6 +319,27 @@ def fetch_ishares_constituents():
             sector_en = sector_de
 
         ticker_clean = raw_ticker.upper().replace(" ", "-").replace("/", "-")
+        # Strip trailing dot (iShares UK convention: "BP.", "NG." = ordinary shares)
+        # Иначе получаваме "BP..L" което Yahoo не разпознава.
+        ticker_clean = ticker_clean.rstrip(".")
+        # Middle dot → dash (UK dual-class: "BT.A" → "BT-A.L" в Yahoo)
+        ticker_clean = ticker_clean.replace(".", "-")
+
+        # Skip празни или малформирани тикери (iShares понякога има "-" редове)
+        if not ticker_clean or ticker_clean in ("-", "--"):
+            print(f"    WARN skip malformed ticker '{raw_ticker}' ({name})")
+            skipped_exchange += 1
+            continue
+
+        # Ticker override: известни несъвпадения между iShares и Yahoo
+        # Ключ е pre-suffix тикера, стойност е новият pre-suffix тикер.
+        override_key = ticker_clean
+        if override_key in TICKER_OVERRIDES_BY_EXCHANGE.get(suffix, {}):
+            new_ticker = TICKER_OVERRIDES_BY_EXCHANGE[suffix][override_key]
+            print(f"    INFO ticker override: {ticker_clean}{suffix} → "
+                  f"{new_ticker}{suffix} ({name})")
+            ticker_clean = new_ticker
+
         yahoo_symbol = ticker_clean + suffix
 
         records.append({
