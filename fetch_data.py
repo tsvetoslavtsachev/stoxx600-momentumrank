@@ -484,8 +484,12 @@ def bulk_download_prices(records, start_dt, end_dt, session=None):
 
 # ── Metrics ──────────────────────────────────────────────────────────────────
 def calc_return(prices, trading_days):
+    # Insufficient history → NaN, NOT 0.0. A forced 0.0 looks like a real "flat"
+    # return: sig(0)=50, a neutral signal that silently pulls a partial-history
+    # stock's momentum score toward the middle. NaN instead drops the term from
+    # the score (see calc_momentum_score) and is flagged as partial_history.
     if prices is None or len(prices) < trading_days + 1:
-        return 0.0
+        return float("nan")
     return round((prices.iloc[-1] / prices.iloc[-(trading_days + 1)] - 1) * 100, 2)
 
 
@@ -542,24 +546,42 @@ def size_score_from_weight(weight_pct):
         return 50
 
 
+def _is_missing(x):
+    return x is None or (isinstance(x, float) and math.isnan(x))
+
+
 def calc_momentum_score(r1m, r3m, r6m, r12m, vol, sharpe, weight_pct):
     def sig(x, scale):
         exp_arg = max(-50, min(50, -x / scale))
         return 100.0 / (1.0 + math.exp(exp_arg))
 
-    s12 = sig(r12m, 30)
-    s6 = sig(r6m, 20)
-    s3 = sig(r3m, 15)
-    s1 = sig(r1m, 10)
-    s_sh = sig(sharpe, 1.0)
-    s_vol = 100.0 / (1.0 + math.exp(max(-50, min(50, (vol - 25) / 10))))
-    s_size = size_score_from_weight(weight_pct)
+    # (weight, component) pairs. A missing input (NaN — e.g. a return window the
+    # stock lacks the history for) is dropped and its weight redistributed across
+    # the present components, so missing history does NOT silently pull the score
+    # toward the neutral sig(0)=50. With full data the present weights sum to 1.0,
+    # so the result is identical to the original weighted blend.
+    terms = []
+    if not _is_missing(r12m):
+        terms.append((0.30, sig(r12m, 30)))
+    if not _is_missing(r6m):
+        terms.append((0.25, sig(r6m, 20)))
+    if not _is_missing(r3m):
+        terms.append((0.20, sig(r3m, 15)))
+    if not _is_missing(r1m):
+        terms.append((0.10, sig(r1m, 10)))
+    if not _is_missing(sharpe):
+        terms.append((0.10, sig(sharpe, 1.0)))
+    if not _is_missing(vol):
+        terms.append((0.03, 100.0 / (1.0 + math.exp(max(-50, min(50, (vol - 25) / 10))))))
 
-    return round(
-        s12 * 0.30 + s6 * 0.25 + s3 * 0.20 + s1 * 0.10
-        + s_sh * 0.10 + s_vol * 0.03 + s_size * 0.02,
-        1,
-    )
+    # iShares size bucket is always present (0 → neutral 50), so the score is
+    # never fully undefined.
+    terms.append((0.02, size_score_from_weight(weight_pct)))
+
+    weight_total = sum(w for w, _ in terms)
+    if weight_total == 0:
+        return float("nan")
+    return round(sum(w * c for w, c in terms) / weight_total, 1)
 
 
 # ── Process single ticker ────────────────────────────────────────────────────
@@ -598,6 +620,12 @@ def process_ticker(info, prices, volumes):
 
     score = calc_momentum_score(r1m, r3m, r6m, r12m, vol, shp, weight_pct)
 
+    # Flag stocks whose return windows could not all be computed (e.g. a recent
+    # index addition with < 12m of history). Their score is reweighted onto the
+    # windows that exist, but consumers should know it is based on partial data.
+    n_missing_ret = sum(1 for v in (r1m, r3m, r6m, r12m) if _is_missing(v))
+    data_quality = "ok" if n_missing_ret == 0 else "partial_history"
+
     return {
         "symbol":        sym,
         "name":          info["name"],
@@ -621,6 +649,7 @@ def process_ticker(info, prices, volumes):
         "drawdown52w":   dd52,
         "momentumScore": score,
         "stale":         False,
+        "dataQuality":   data_quality,
     }
 
 
@@ -744,6 +773,7 @@ def main():
         "fresh_rate":      round(fresh_rate, 4),
         "total_rate":      round(total_rate, 4),
         "vol_ok":          sum(1 for r in results if r["avgVolume"] > 0),
+        "partial_history_count": sum(1 for r in results if r.get("dataQuality") == "partial_history"),
         "stale":           False,
         "warnings":        [],
     }
@@ -762,8 +792,16 @@ def main():
             json.dump(meta, f, indent=2)
         sys.exit(1)
 
+    # Sanitize NaN → None so the JSON is valid (json.dump would otherwise emit a
+    # bare `NaN` literal, which breaks the frontend's JSON.parse). The frontend
+    # formats return fields with a null-safe helper (shows "—").
+    results_out = [
+        {k: (None if isinstance(v, float) and math.isnan(v) else v) for k, v in r.items()}
+        for r in results
+    ]
+
     with open(OUTPUT_FILE, "w") as f:
-        json.dump(results, f, separators=(",", ":"))
+        json.dump(results_out, f, separators=(",", ":"))
     with open(META_FILE, "w") as f:
         json.dump(meta, f, indent=2)
 
