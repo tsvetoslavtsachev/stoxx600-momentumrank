@@ -56,7 +56,7 @@ Dashboard ще е достъпен на:
 
 ### fetch_data.py
 
-1. **Зарежда списъка** на 600-те компании от Wikipedia (STOXX Europe 600 страница)
+1. **Зарежда списъка** на 600-те компании от iShares EXSA ETF holdings (iShares STOXX Europe 600 UCITS ETF)
 2. **Добавя Yahoo Finance суфикси** по страна:
    - Великобритания → `.L` (London)
    - Германия → `.DE` (XETRA)
@@ -78,7 +78,7 @@ Dashboard ще е достъпен на:
    - Volatility (annualized std dev на log-returns × √252)
    - Sharpe ratio (rf = 2.5% — Bund yield approximation)
    - Max Drawdown (от цялата история)
-   - Market Cap в **EUR** (с FX conversion)
+   - Size score от **iShares тегло** в индекса (заменя стария Market Cap — v12 вече не тегли marketCap)
 5. **Momentum Score (0–100)** — sigmoid формула:
    - 12M return → 30%
    - 6M return  → 25%
@@ -86,7 +86,7 @@ Dashboard ще е достъпен на:
    - 1M return  → 10%
    - Sharpe     → 10%
    - Volatility → 3%
-   - Market Cap → 2%
+   - Size (iShares тегло) → 2%
 
 ### index.html
 
@@ -120,7 +120,7 @@ python fetch_data.py
 
 | | S&P 500 | STOXX 600 |
 |---|---|---|
-| Тикери | директно от GitHub CSV | Wikipedia + Yahoo суфикс по страна |
+| Тикери | директно от GitHub CSV | iShares EXSA + Yahoo суфикс по страна |
 | Валута | USD | EUR (конвертирана) |
 | Risk-free rate | 4.5% (T-Bill) | 2.5% (Bund) |
 | Страни | 1 (US) | 17 (UK, DE, FR, CH, NL…) |
