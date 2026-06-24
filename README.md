@@ -57,7 +57,7 @@ Dashboard ще е достъпен на:
 ### fetch_data.py
 
 1. **Зарежда списъка** на 600-те компании от iShares EXSA ETF holdings (iShares STOXX Europe 600 UCITS ETF)
-2. **Добавя Yahoo Finance суфикси** по страна:
+2. **Добавя Yahoo Finance суфикси** по борса (от iShares `Börse` колоната, с fallback по страна):
    - Великобритания → `.L` (London)
    - Германия → `.DE` (XETRA)
    - Франция → `.PA` (Euronext Paris)
