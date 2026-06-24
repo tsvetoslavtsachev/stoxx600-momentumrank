@@ -10,6 +10,7 @@ Live dashboard → `index.html` (отвори директно от GitHub Pages
 
 ```
 ├── fetch_data.py          # Python скрипт за изтегляне на данни
+├── momentum_core.py        # споделено ядро (vendored, идентично с US близнака)
 ├── index.html             # Dashboard (static SPA)
 ├── data.json              # Генериран автоматично от fetch_data.py
 ├── data_meta.json         # Метаданни (дата, брой записи)
