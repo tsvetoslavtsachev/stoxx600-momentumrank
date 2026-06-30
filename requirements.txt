@@ -3,5 +3,6 @@ curl_cffi>=0.7
 pandas>=2.0
 numpy>=1.24
 requests>=2.31
+pyyaml>=6.0            # INIT-22 P9: collectors.price.consumer parses config.yaml (symbol_to_series)
 lxml
 html5lib

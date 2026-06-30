@@ -14,12 +14,24 @@ jobs:
   update-data:
     runs-on: ubuntu-latest
     timeout-minutes: 20  # v12 е много по-бърз от v11 (без Phase 2)
+    env:
+      # INIT-22 P9 strangler. Set BOTH repo secrets to source STOXX prices from the canonical
+      # price-archive base (mechanism = checkout via read PAT, mirror of P6 ETF-rr):
+      #   DATACORE_RO_PAT       -> data-core (private)     : the P1 reader datacore.archive
+      #   PRICE_ARCHIVE_RO_PAT  -> price-archive (private) : the canonical daily bars (the data)
+      # ABSENT (either) -> the base checkouts are skipped and fetch_data.py falls back to its OLD
+      # bulk_download_prices (production unchanged). collectors is PUBLIC (the reader) -> no token.
+      # normalize_currency=False (in fetch_data.py): GBX .L names stay raw pence, byte-identical to
+      # today's published 'price' column (ranks are scale-invariant).
+      DATACORE_RO_PAT: ${{ secrets.DATACORE_RO_PAT }}
+      PRICE_ARCHIVE_RO_PAT: ${{ secrets.PRICE_ARCHIVE_RO_PAT }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0   # P9: widened for the rebase-before-push window
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
@@ -31,18 +43,68 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements.txt   # single tracked manifest (parity with tests.yml + US twin)
 
-      - name: Run fetch_data.py
+      # ---- P9: canonical prices come FROM the price-archive base; only when BOTH PATs are set ----
+      - name: Checkout data-core (P1 reader, read-only)
+        if: ${{ env.DATACORE_RO_PAT != '' && env.PRICE_ARCHIVE_RO_PAT != '' }}
+        uses: actions/checkout@v4
+        with:
+          repository: tsvetoslavtsachev/data-core
+          token: ${{ env.DATACORE_RO_PAT }}   # Contents=READ only -- cannot corrupt canon
+          path: .data-core
+          fetch-depth: 1
+      - name: Checkout price-archive (canonical daily bars, read-only)
+        if: ${{ env.DATACORE_RO_PAT != '' && env.PRICE_ARCHIVE_RO_PAT != '' }}
+        uses: actions/checkout@v4
+        with:
+          repository: tsvetoslavtsachev/price-archive
+          token: ${{ env.PRICE_ARCHIVE_RO_PAT }}   # Contents=READ only
+          path: .price-archive
+          fetch-depth: 1
+      - name: Checkout collectors (public, the price reader)
+        if: ${{ env.DATACORE_RO_PAT != '' && env.PRICE_ARCHIVE_RO_PAT != '' }}
+        uses: actions/checkout@v4
+        with:
+          repository: tsvetoslavtsachev/collectors
+          path: .collectors
+          fetch-depth: 1
+
+      - name: Run fetch_data.py (base-first canonical prices; yfinance CLOSED fallback)
         run: python fetch_data.py
         env:
           PYTHONUNBUFFERED: "1"
+          # When the base checkouts ran, the consumer reads canon from .price-archive via the P1
+          # reader on PYTHONPATH; otherwise these point at absent dirs, the import fails, and
+          # fetch_data.py transparently uses the OLD bulk_download_prices (CLOSED fallback).
+          DATACORE_ROOT: ${{ github.workspace }}/.price-archive
+          PYTHONPATH: ${{ github.workspace }}/.data-core:${{ github.workspace }}/.collectors
+
+      # P9 guard: with the PATs set, base sourcing is INTENDED -- fail RED (before any commit) on a
+      # silent mass-fallback to yfinance (coverage floor + allow-list).
+      - name: Assert base-sourced (no silent yfinance fallback)
+        if: ${{ env.DATACORE_RO_PAT != '' && env.PRICE_ARCHIVE_RO_PAT != '' }}
+        run: python assert_base_sourced.py
 
       - name: Commit and push data.json
         if: success()
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data.json data_meta.json
-          git diff --staged --quiet && echo "No changes to commit" || (
+          git add data.json data_meta.json price_source.json
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
             git commit -m "data: STOXX 600 momentum update $(date -u +'%Y-%m-%d %H:%M UTC')"
-            git push
-          )
+            # Retry push with rebase against concurrent runs (cron + dispatch can overlap; no
+            # concurrency gate). Mirrors the SP500-rotationradar twin's push loop (twin parity).
+            for attempt in 1 2 3 4 5; do
+              if git push; then
+                echo "Push OK (attempt $attempt)."
+                exit 0
+              fi
+              echo "Push failed (attempt $attempt) — rebase + retry..."
+              git pull --rebase origin main
+              sleep $((attempt * 5))
+            done
+            echo "Push failed 5x — abort."
+            exit 1
+          fi

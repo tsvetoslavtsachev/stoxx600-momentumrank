@@ -46,6 +46,21 @@ from momentum_core import (
     _is_missing,
 )
 
+# INIT-22 P9 strangler: read canonical daily Close+Volume FROM the price-archive (base) first,
+# keeping the OLD bulk_download_prices as a CLOSED fallback so production never stops. ONE canonical
+# reader (collectors/price/consumer.py) shared by every consumer; if collectors/data-core are not
+# importable (a bare local run, no archive checkout) we degrade to the pure fetch. The CI guard
+# (assert_base_sourced.py), gated on the read PATs, fails RED on a silent mass-fallback.
+# normalize_currency=False: STOXX momentum keeps RAW GBX (pence) for the 126 .L names to preserve
+# byte-identity with production (the rendered 'price' column; ranks are scale-invariant either way).
+try:
+    from collectors.price.consumer import load_ohlcv_base_first
+    _HAVE_BASE = True
+except ImportError:
+    _HAVE_BASE = False
+
+PRICE_SOURCE_FILE = "price_source.json"
+
 # ── Config ────────────────────────────────────────────────────────────────────
 OUTPUT_FILE = "data.json"
 META_FILE = "data_meta.json"
@@ -464,6 +479,86 @@ def build_stale_record(prev_record, current_info):
     return rec
 
 
+# ── INIT-22 P9 strangler helpers ───────────────────────────────────────────────
+def _naive(ts):
+    """The consumer compares against a tz-naive archive index; main() builds tz-aware UTC datetimes
+    (datetime.now(timezone.utc)). Strip the tz so the window clip does not raise on a naive/aware
+    comparison."""
+    t = pd.Timestamp(ts)
+    return t.tz_localize(None) if t.tz is not None else t
+
+
+def _base_first_price_data(records, start_dt, end_dt, session, source_acc):
+    """Base-first {sym:{'prices':Series,'volumes':Series}} mirroring bulk_download_prices' shape,
+    with the OLD bulk_download_prices as a CLOSED fallback (P9 strangler -- production NEVER stops:
+    it degrades to the old fetch when the base reader is unimportable AND on ANY base-read exception).
+    normalize_currency=False (signed off): STOXX momentum keeps RAW GBX (pence) for the 126 .L names
+    so the rendered 'price' column stays byte-identical to production; ranks are scale-invariant.
+    Every REQUESTED symbol is recorded in ``source_acc`` ('base'|'fetch'|'missing') -- one neither
+    the archive nor the fallback served is stamped 'missing' (the consumer pops it from its own map,
+    so without this it would evaporate and the guard's base-fraction floor would not see it).
+    Returns (price_data, recovered); ``recovered`` is 0 in base mode (return-arity parity)."""
+    symbols = [r["symbol"] for r in records]
+
+    def _pure_fetch():
+        # The OLD path: bulk_download_prices for the whole set (the CLOSED fallback). Used when the
+        # base reader is unimportable AND when a base read raises -- the strangler degrades, never
+        # hard-stops.
+        price_data, recovered = bulk_download_prices(records, start_dt, end_dt, session=session)
+        for s in symbols:
+            source_acc[s] = "fetch" if s in price_data else "missing"
+        return price_data, recovered
+
+    if not _HAVE_BASE:
+        return _pure_fetch()
+
+    def _fallback(missing, period=None):
+        # bulk_download_prices wants records (with 'symbol') + start/end/session and returns
+        # {sym:{'prices','volumes'}}; adapt to the consumer's dict{field -> DataFrame} contract.
+        fb, _ = bulk_download_prices([{"symbol": s} for s in missing], start_dt, end_dt,
+                                     session=session)
+        close = pd.DataFrame({s: d["prices"] for s, d in fb.items()})
+        vol = pd.DataFrame({s: d["volumes"] for s, d in fb.items()})
+        return {"Close": close, "Volume": vol}
+
+    try:
+        ohlcv, source_map = load_ohlcv_base_first(
+            symbols, fetch_fallback=_fallback, start=_naive(start_dt), end=_naive(end_dt),
+            normalize_currency=False)
+    except Exception as e:  # noqa: BLE001 -- strangler: ANY base failure degrades to the old fetch
+        print(f"  WARN: base read raised ({e!r}); degrading to yfinance (strangler).")
+        return _pure_fetch()
+
+    source_acc.update(source_map)
+    close = ohlcv.get("Close", pd.DataFrame())
+    vol = ohlcv.get("Volume", pd.DataFrame())
+    # Reshape dict{field -> DataFrame} back to the {sym:{'prices','volumes'}} the Phase 3 loop wants,
+    # mirroring bulk_download_prices' >=60-bar gate (a shorter series is dropped, not ranked).
+    price_data = {}
+    for s in close.columns:
+        p = close[s].dropna().astype(float)
+        if len(p) >= 60:
+            v = (vol[s].reindex(p.index).fillna(0).astype(float)
+                 if s in vol.columns else pd.Series(0.0, index=p.index))
+            price_data[s] = {"prices": p, "volumes": v}
+    for s in symbols:
+        source_acc.setdefault(s, "missing")  # requested but neither base nor fetch served it
+    return price_data, 0
+
+
+def _write_price_source(source_acc, expected):
+    """Per-symbol price provenance (base vs fetch) for assert_base_sourced.py (P9 strangler)."""
+    n_base = sum(1 for v in source_acc.values() if v == "base")
+    payload = {
+        "by_symbol": dict(sorted(source_acc.items())),
+        "summary": {"expected": expected, "covered": len(source_acc),
+                    "base": n_base, "fetch": len(source_acc) - n_base},
+    }
+    with open(PRICE_SOURCE_FILE, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+        f.write("\n")
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 def main():
     print("MomentumRank STOXX Europe 600 — fetch_data.py v12")
@@ -497,14 +592,19 @@ def main():
     print()
 
     # Phase 1 + 1.5
-    print("Phase 1: Bulk price download (+ retry)")
+    print("Phase 1: Bulk price download (base-first canonical; yfinance CLOSED fallback)")
     print("-" * 52)
-    price_data, retry_recovered = bulk_download_prices(
-        records, start_dt, end_dt, session=session
+    price_source: dict[str, str] = {}
+    price_data, retry_recovered = _base_first_price_data(
+        records, start_dt, end_dt, session, price_source
     )
     print(f"  Got prices for {len(price_data)} / {len(records)} tickers")
     if retry_recovered:
         print(f"  Retry recovered: {retry_recovered}")
+    if price_source:
+        n_base = sum(1 for v in price_source.values() if v == "base")
+        print(f"  Price source: {n_base} base / {len(price_source) - n_base} fetch")
+    _write_price_source(price_source, expected=len(records))
     print()
 
     # Phase 3: Metrics (no separate Phase 2!)
