@@ -102,7 +102,9 @@ jobs:
                 exit 0
               fi
               echo "Push failed (attempt $attempt) — rebase + retry..."
-              git pull --rebase origin main
+              # -X theirs: both runs regenerate the whole data.json, so a rebase always conflicts;
+              # our fresh rebuild is authoritative -> resolve to our side instead of erroring red.
+              git pull --rebase -X theirs origin main
               sleep $((attempt * 5))
             done
             echo "Push failed 5x — abort."
