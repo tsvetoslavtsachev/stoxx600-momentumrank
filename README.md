@@ -121,7 +121,7 @@ python fetch_data.py
 | | S&P 500 | STOXX 600 |
 |---|---|---|
 | Тикери | директно от GitHub CSV | iShares EXSA + Yahoo суфикс по страна |
-| Валута | USD | EUR (конвертирана) |
+| Валута | USD | суров местен (UK `.L` в GBX/пенита; ранговете са scale-invariant) |
 | Risk-free rate | 4.5% (T-Bill) | 2.5% (Bund) |
 | Страни | 1 (US) | 17 (UK, DE, FR, CH, NL…) |
 | Нов филтър | — | **Country** |
