@@ -35,6 +35,22 @@ jobs:
           pip install -r requirements.txt
           pip install pytest
 
+      # REV2 queue (INIT-24): fail the run if the vendored momentum_core drifts from the
+      # tsachev-ops canon. sync_momentum_core.py --check can't run in CI (the canon lives in
+      # the private vault, not this repo), so the pinned sha256 IS the canon's identity. On a
+      # legit core change: run sync_momentum_core.py, then update the sha here in the SAME
+      # commit that ships the new momentum_core.py (the existing sync ritual, one extra line).
+      - name: Check vendored momentum_core parity (REV2)
+        run: |
+          EXPECT=a8ce97a2c275
+          got=$(sha256sum momentum_core.py | cut -c1-12)
+          if [ "$got" != "$EXPECT" ]; then
+            echo "DRIFT momentum_core.py: got $got expected $EXPECT"
+            echo "FAIL -- run sync_momentum_core.py + update the pinned sha in tests.yml"
+            exit 1
+          fi
+          echo "OK    momentum_core.py $got -- in sync with canon"
+
       - name: Run tests
         # python -m pytest puts the repo root on sys.path → `import fetch_data` resolves
         run: python -m pytest -q
