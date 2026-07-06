@@ -37,16 +37,18 @@ jobs:
 
       # REV2 queue (INIT-24): fail the run if the vendored momentum_core drifts from the
       # tsachev-ops canon. sync_momentum_core.py --check can't run in CI (the canon lives in
-      # the private vault, not this repo), so the pinned sha256 IS the canon's identity. On a
-      # legit core change: run sync_momentum_core.py, then update the sha here in the SAME
-      # commit that ships the new momentum_core.py (the existing sync ritual, one extra line).
+      # the private vault, not this repo), so the pinned git blob id IS the canon's identity.
+      # The blob id is the identity of the COMMITTED bytes (git rev-parse HEAD:path), immune to
+      # line endings and checkout -- a working-tree sha256 was flaky (CRLF vs LF blob mismatch).
+      # On a legit core change: run sync_momentum_core.py, then update the blob id here in the
+      # SAME commit that ships the new momentum_core.py (the existing sync ritual, one extra line).
       - name: Check vendored momentum_core parity (REV2)
         run: |
-          EXPECT=a8ce97a2c275
-          got=$(sha256sum momentum_core.py | cut -c1-12)
+          EXPECT=d12115c4db04
+          got=$(git rev-parse HEAD:momentum_core.py | cut -c1-12)
           if [ "$got" != "$EXPECT" ]; then
             echo "DRIFT momentum_core.py: got $got expected $EXPECT"
-            echo "FAIL -- run sync_momentum_core.py + update the pinned sha in tests.yml"
+            echo "FAIL -- run sync_momentum_core.py + update the pinned blob id in tests.yml"
             exit 1
           fi
           echo "OK    momentum_core.py $got -- in sync with canon"
