@@ -480,6 +480,17 @@ body {
       <span style="font-size:10px; color: var(--text-muted);">STOXX Europe 600 Momentum Ranking &middot; MomentumRank</span>
     </div>
   </div>
+  <!-- Methodology & disclaimer (audit 2026-07-07, П1) -->
+  <details style="margin:2px 14px 10px;font-size:10.5px;color:var(--text-secondary);">
+    <summary style="cursor:pointer;color:var(--text-muted);font-weight:500;">Methodology &amp; disclaimer</summary>
+    <div style="max-width:860px;padding:6px 2px 0;line-height:1.5;">
+      <p style="margin:0 0 5px;"><strong>What this score is.</strong> Momentum Score is a proprietary blend: sigmoid-scaled 12M/6M/3M/1M returns (weights 0.30/0.25/0.20/0.10) plus Sharpe (0.10), inverted volatility (0.03) and a size bracket (0.02, from the iShares index weight). Every window runs up to the latest close &mdash; the most recent month <em>is</em> included. This differs from academic momentum (12-1) and from MSCI momentum indexes, which exclude the most recent month because it tends to mean-revert.</p>
+      <p style="margin:0 0 5px;"><strong>UK (.L) returns are price-only.</strong> Following Yahoo&rsquo;s convention, London-listed series are not dividend-adjusted, while continental series are total-return. UK names&rsquo; returns &mdash; and therefore their ranks &mdash; do not reflect their dividend yield (typically a few percent per year), which understates high-yield UK names relative to the continent.</p>
+      <p style="margin:0 0 5px;"><strong>Absolute scale, not percentiles.</strong> The sigmoid maps raw returns to 0&ndash;100 on a fixed scale, so the overall score level rises in bull markets and falls in bear markets: a &ldquo;Min Score&rdquo; threshold selects a different depth of the index in different regimes, and in strong markets top names cluster together above 90.</p>
+      <p style="margin:0 0 5px;"><strong>No crash protection.</strong> The score contains no regime or drawdown safeguard. Momentum as a factor is known for sharp reversals when a falling market snaps back (Daniel &amp; Moskowitz, 2016) &mdash; recent leaders can become the fastest losers precisely at the turn.</p>
+      <p style="margin:0;"><strong>Data.</strong> Daily closes in local currency (UK names quoted in pence); the table rebuilds every weekday. Rows flagged <em>stale</em> carry the previous run&rsquo;s values. Information dashboard only &mdash; not investment advice.</p>
+    </div>
+  </details>
 
 </div><!-- /app -->
 

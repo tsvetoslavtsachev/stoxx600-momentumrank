@@ -112,3 +112,34 @@ def test_process_ticker_full_history_is_ok():
 
     assert rec["dataQuality"] == "ok"
     assert not math.isnan(rec["return12m"])
+
+
+# ── Formula contract: golden vectors (одит 2026-07-07, П5) ────────────────────
+# The expected scores below are PINNED NUMERIC LITERALS computed from the formula
+# as signed off on 2026-07-07 (weights 0.30/0.25/0.20/0.10/0.10/0.03/0.02, scales
+# 30/20/15/10, vol center 25/10, Sharpe scale 1.0). Unlike the recompute-style
+# guard above, nothing here re-derives the expected value through the formula —
+# so ANY change to weights, scales or the sigmoid breaks this test. That is the
+# point: it is a contract. If a formula change is intended, update these literals
+# consciously, in their own commit, with an explicit sign-off — never silently.
+
+from momentum_core import momentum_blend  # noqa: E402  (vendored core, byte-identical in both repos)
+
+
+def test_contract_golden_vectors():
+    nan = float("nan")
+    cases = [
+        # (r1m,  r3m,   r6m,   r12m,  vol,  sharpe, size) -> pinned score
+        ((5.0,   8.0,   12.0,  20.0,  18.0,  1.2,  50.0),  65.5),  # typical positive
+        ((-5.0, -10.0, -15.0, -25.0,  35.0, -0.8,  25.0),  32.1),  # bearish
+        ((25.0,  45.0,  80.0, 120.0,  45.0,  2.5, 100.0),  93.9),  # saturating bull
+        ((nan,   8.0,   12.0,  20.0,  18.0,  1.2,  50.0),  65.8),  # r1m missing -> reweight
+    ]
+    for args, want in cases:
+        assert momentum_blend(*args) == want, (args, want)
+
+
+def test_contract_only_size_present():
+    # Every price term missing -> the ever-present size bucket IS the score.
+    nan = float("nan")
+    assert momentum_blend(nan, nan, nan, nan, nan, nan, 75.0) == 75.0
