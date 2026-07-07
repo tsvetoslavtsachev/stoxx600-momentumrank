@@ -412,7 +412,7 @@ def process_ticker(info, prices, volumes):
     r1m = calc_return(prices, 21)
     r3m = calc_return(prices, 63)
     r6m = calc_return(prices, 126)
-    r12m = calc_return(prices, 252)
+    r12m = calc_return(prices, 252, skip=21)  # canonical 12-1 skip-month (audit 2026-07-07, П2б)
     vol = calc_volatility(prices)
     shp = calc_sharpe(prices, RF)
     dd = calc_drawdown(prices)

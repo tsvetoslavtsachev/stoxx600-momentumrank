@@ -202,14 +202,21 @@ def bulk_download_prices(records, start_dt, end_dt, session=None):
 
 
 # ── Metrics (price-only, market-agnostic) ─────────────────────────────────────
-def calc_return(prices, trading_days):
+def calc_return(prices, trading_days, skip=0):
     # Insufficient history → NaN, NOT 0.0. A forced 0.0 looks like a real "flat"
     # return: sig(0)=50, a neutral signal that silently pulls a partial-history
     # stock's momentum score toward the middle. NaN instead drops the term from
     # the score (see momentum_blend) and is flagged as partial_history.
+    #
+    # `skip` implements the canonical momentum skip-month: the window ENDS `skip`
+    # trading days before the last bar, so the most recent ~month is excluded from
+    # the signal (short-term reversal — Jegadeesh 1990, Lehmann 1990). The 12-1
+    # momentum window is calc_return(prices, 252, skip=21): close[t-252] → close[t-21],
+    # i.e. prices.iloc[-253] → prices.iloc[-22]. skip=0 (the default) is the plain
+    # point-to-point return still used for the shorter 3M/6M windows.
     if prices is None or len(prices) < trading_days + 1:
         return float("nan")
-    return round((prices.iloc[-1] / prices.iloc[-(trading_days + 1)] - 1) * 100, 2)
+    return round((prices.iloc[-(skip + 1)] / prices.iloc[-(trading_days + 1)] - 1) * 100, 2)
 
 
 def calc_volatility(prices, trading_days=252):
@@ -254,7 +261,18 @@ def momentum_blend(r1m, r3m, r6m, r12m, vol, sharpe, size_score):
     """Shared momentum blend. `size_score` (0-100) is a US/EU parameter computed by
     each repo's fetch_data.py from its own size source — S&P 500 from marketCap
     brackets, STOXX 600 from iShares weight brackets — so the blend itself stays
-    identical across both dashboards."""
+    identical across both dashboards.
+
+    Formula contract (audit 2026-07-07, П2б — "the formula to the literature"):
+      * r12m is the CANONICAL 12-1 momentum window (skip-month) — the caller passes
+        calc_return(prices, 252, skip=21), not the old 12-0 point-to-point.
+      * The standalone r1m term (a short-term REVERSAL contra-signal, the far side of
+        the momentum canon) is EXCLUDED from the score.
+      * The standalone inverted-vol term is EXCLUDED: volatility was double-counted
+        (it already lives in the Sharpe denominator). Sharpe stays the single risk leg.
+    `r1m` and `vol` remain in the signature because each repo still computes and
+    reports them as table columns — they are deliberately NOT part of the score.
+    The golden-vector + exclusion tests lock this; do not re-add them silently."""
     def sig(x, scale):
         exp_arg = max(-50, min(50, -x / scale))
         return 100.0 / (1.0 + math.exp(exp_arg))
@@ -262,8 +280,8 @@ def momentum_blend(r1m, r3m, r6m, r12m, vol, sharpe, size_score):
     # (weight, component) pairs. A missing input (NaN — e.g. a return window the
     # stock lacks the history for) is dropped and its weight redistributed across
     # the present components, so missing history does NOT silently pull the score
-    # toward the neutral sig(0)=50. With full data the present weights sum to 1.0,
-    # so the result is identical to the original weighted blend.
+    # toward the neutral sig(0)=50. With full data the present weights sum to 0.87;
+    # dividing by that total renormalises the score back to [0..100].
     terms = []
     if not _is_missing(r12m):
         terms.append((0.30, sig(r12m, 30)))
@@ -271,12 +289,8 @@ def momentum_blend(r1m, r3m, r6m, r12m, vol, sharpe, size_score):
         terms.append((0.25, sig(r6m, 20)))
     if not _is_missing(r3m):
         terms.append((0.20, sig(r3m, 15)))
-    if not _is_missing(r1m):
-        terms.append((0.10, sig(r1m, 10)))
     if not _is_missing(sharpe):
         terms.append((0.10, sig(sharpe, 1.0)))
-    if not _is_missing(vol):
-        terms.append((0.03, 100.0 / (1.0 + math.exp(max(-50, min(50, (vol - 25) / 10))))))
 
     # The size bucket is always present (caller passes a neutral 50 when size is
     # unknown), so the score is never fully undefined.

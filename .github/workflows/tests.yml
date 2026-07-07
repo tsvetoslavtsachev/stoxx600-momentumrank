@@ -44,7 +44,7 @@ jobs:
       # SAME commit that ships the new momentum_core.py (the existing sync ritual, one extra line).
       - name: Check vendored momentum_core parity (REV2)
         run: |
-          EXPECT=d12115c4db04
+          EXPECT=27cb05855f78
           got=$(git rev-parse HEAD:momentum_core.py | cut -c1-12)
           if [ "$got" != "$EXPECT" ]; then
             echo "DRIFT momentum_core.py: got $got expected $EXPECT"
