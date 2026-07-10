@@ -59,6 +59,19 @@ body {
 .logo svg { width: 22px; height: 22px; }
 .logo-text { font-size: 14px; font-weight: 700; letter-spacing: -0.3px; color: var(--text); }
 .logo-text span { color: var(--accent); }
+/* O4 badge (observation, not a signal · horizon) — visible one-liner surfaced
+   from the collapsed Methodology & disclaimer; details stays for depth. */
+.o4-badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 10px; font-weight: 600; letter-spacing: 0.02em;
+  text-transform: uppercase; white-space: nowrap;
+  color: #7dd3fc; background: rgba(56,189,248,0.10);
+  border: 1px solid rgba(56,189,248,0.35);
+  border-radius: 999px; padding: 3px 9px;
+  margin-right: 12px; flex-shrink: 0; cursor: help;
+}
+.o4-badge .sep { opacity: 0.5; }
+.o4-badge .horizon { color: var(--text-secondary); text-transform: none; font-weight: 500; }
 .logo-sub { font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; color: var(--text-muted); margin-top: 1px; }
 .kpi-group { display: flex; gap: 6px; flex: 1; flex-wrap: wrap; }
 .kpi-card {
@@ -316,6 +329,9 @@ body {
         <div class="logo-sub">STOXX Europe 600</div>
       </div>
     </div>
+    <span class="o4-badge" title="Descriptive, backward-looking momentum rank. Not a forward signal and carries no crash/regime protection — see Methodology &amp; disclaimer below for the full caveats.">
+      Observation, not a signal <span class="sep">·</span> <span class="horizon">backward-looking</span>
+    </span>
     <div class="kpi-group">
       <div class="kpi-card">
         <div class="kpi-label">Stocks</div>
