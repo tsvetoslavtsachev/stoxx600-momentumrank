@@ -73,6 +73,20 @@ body {
 .o4-badge .sep { opacity: 0.5; }
 .o4-badge .horizon { color: var(--text-secondary); text-transform: none; font-weight: 500; }
 .logo-sub { font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; color: var(--text-muted); margin-top: 1px; }
+
+/* Conclusion line (canon rule 1: the takeaway first) — one human line, built
+   from the data, saying what this is and what it shows now. */
+.conclusion-line {
+  padding: 8px 16px;
+  background: #12141c;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px; line-height: 1.5; color: var(--text-secondary);
+}
+.conclusion-line strong { color: var(--text); font-weight: 600; }
+
+/* Ticker links (canon rule 2: every name links out to Yahoo Finance) */
+.ticker-cell a { color: inherit; text-decoration: none; }
+.ticker-cell a:hover { text-decoration: underline; color: var(--accent); }
 .kpi-group { display: flex; gap: 6px; flex: 1; flex-wrap: wrap; }
 .kpi-card {
   background: var(--card); border: 1px solid var(--border);
@@ -353,6 +367,9 @@ body {
     <div class="kpi-date" id="kpi-date">Loading...</div>
   </div>
 
+  <!-- Conclusion line (canon rule 1): populated from the data on load -->
+  <div class="conclusion-line" id="conclusion-line">Loading…</div>
+
   <!-- Filters Bar -->
   <div class="filters-bar">
     <div class="filter-group">
@@ -436,22 +453,22 @@ body {
           <thead>
             <tr>
               <th class="col-check"><input type="checkbox" class="row-check" id="select-all" title="Select all visible"></th>
-              <th class="col-rank num" data-sort="momentumScore" data-dir="desc">Rank <span class="sort-arrow">▼</span></th>
-              <th class="col-ticker" data-sort="symbol">Ticker <span class="sort-arrow">▲</span></th>
-              <th class="col-name" data-sort="name">Company <span class="sort-arrow">▲</span></th>
-              <th class="col-sector" data-sort="sector">Sector <span class="sort-arrow">▲</span></th>
-              <th class="col-country" data-sort="country">Ctry <span class="sort-arrow">▲</span></th>
-              <th class="col-price num" data-sort="price">Price <span class="sort-arrow">▲</span></th>
-              <th class="col-ret num" data-sort="return12m">12M <span class="sort-arrow">▲</span></th>
-              <th class="col-ret num" data-sort="return6m">6M <span class="sort-arrow">▲</span></th>
-              <th class="col-ret num" data-sort="return3m">3M <span class="sort-arrow">▲</span></th>
-              <th class="col-ret num" data-sort="return1m">1M <span class="sort-arrow">▲</span></th>
-              <th class="col-vol num" data-sort="volatility">Vol <span class="sort-arrow">▲</span></th>
-              <th class="col-sharpe num" data-sort="sharpe">Sharpe <span class="sort-arrow">▲</span></th>
-              <th class="col-avgvol num" data-sort="avgVolume">Avg Vol <span class="sort-arrow">▲</span></th>
-              <th class="col-weight num" data-sort="weight">Weight <span class="sort-arrow">▲</span></th>
-              <th class="col-dd num" data-sort="drawdown">DD <span class="sort-arrow">▲</span></th>
-              <th class="col-score" data-sort="momentumScore">Score <span class="sort-arrow">▲</span></th>
+              <th class="col-rank num" data-sort="momentumScore" data-dir="desc" title="Rank by Momentum Score, highest first (across the whole STOXX Europe 600, independent of the current filter).">Rank <span class="sort-arrow">▼</span></th>
+              <th class="col-ticker" data-sort="symbol" title="Yahoo Finance ticker with exchange suffix (e.g. .DE XETRA, .PA Paris, .L London, .MI Milan). Click to open the company on Yahoo Finance.">Ticker <span class="sort-arrow">▲</span></th>
+              <th class="col-name" data-sort="name" title="Company name.">Company <span class="sort-arrow">▲</span></th>
+              <th class="col-sector" data-sort="sector" title="Sector (abbreviated in the cell; hover a cell for the full name).">Sector <span class="sort-arrow">▲</span></th>
+              <th class="col-country" data-sort="country" title="Country of listing (abbreviated; hover a cell for the full name).">Ctry <span class="sort-arrow">▲</span></th>
+              <th class="col-price num" data-sort="price" title="Latest dividend-adjusted close, in the stock's local trading currency.">Price <span class="sort-arrow">▲</span></th>
+              <th class="col-ret num" data-sort="return12m" title="12-month total return — the canonical 12-1 window (ends ~1 month before the latest close, skipping the most recent month).">12M <span class="sort-arrow">▲</span></th>
+              <th class="col-ret num" data-sort="return6m" title="6-month total return.">6M <span class="sort-arrow">▲</span></th>
+              <th class="col-ret num" data-sort="return3m" title="3-month total return.">3M <span class="sort-arrow">▲</span></th>
+              <th class="col-ret num" data-sort="return1m" title="1-month total return (tends to mean-revert; shown for context, deliberately not in the 12-1 score).">1M <span class="sort-arrow">▲</span></th>
+              <th class="col-vol num" data-sort="volatility" title="Annualized volatility — how much the price swings. Lower = calmer.">Vol <span class="sort-arrow">▲</span></th>
+              <th class="col-sharpe num" data-sort="sharpe" title="Sharpe ratio — return per unit of volatility. Higher = smoother ride for the return.">Sharpe <span class="sort-arrow">▲</span></th>
+              <th class="col-avgvol num" data-sort="avgVolume" title="Average daily trading volume in shares (K = thousand, M = million).">Avg Vol <span class="sort-arrow">▲</span></th>
+              <th class="col-weight num" data-sort="weight" title="Index weight — the stock's share of the STOXX Europe 600 (approx.).">Weight <span class="sort-arrow">▲</span></th>
+              <th class="col-dd num" data-sort="drawdown" title="Drawdown — how far below its recent peak the price currently sits.">DD <span class="sort-arrow">▲</span></th>
+              <th class="col-score" data-sort="momentumScore" title="Momentum Score (0–100): sigmoid-scaled 12M/6M/3M returns plus Sharpe and a size bracket. An absolute scale, not a percentile. Backward-looking, no crash protection — see Methodology below.">Score <span class="sort-arrow">▲</span></th>
             </tr>
           </thead>
           <tbody id="table-body">
@@ -772,7 +789,7 @@ body {
       return `<tr class="${sel ? 'selected' : ''}" data-symbol="${d.symbol}">
         <td><input type="checkbox" class="row-check" ${sel ? 'checked' : ''} data-sym="${d.symbol}"></td>
         <td class="num">${rank}</td>
-        <td class="ticker-cell" title="${d.symbol}">${d.symbol}</td>
+        <td class="ticker-cell"><a href="https://finance.yahoo.com/quote/${encodeURIComponent(d.symbol)}" target="_blank" rel="noopener" title="Open ${d.symbol} on Yahoo Finance ↗">${d.symbol}</a></td>
         <td class="name-cell" title="${d.name}">${d.name}</td>
         <td class="sector-cell">${abbreviateSector(d.sector)}</td>
         <td class="country-cell" title="${d.country}">${ctry}</td>
@@ -807,6 +824,22 @@ body {
     const map = new Map();
     sorted.forEach((d, i) => map.set(d.symbol, i + 1));
     return map;
+  }
+
+  // ==================== CONCLUSION LINE (canon rule 1) ====================
+  function renderConclusion() {
+    const el = document.getElementById('conclusion-line');
+    if (!el || !allData.length) return;
+    const top = [...allData].sort((a, b) => b.momentumScore - a.momentumScore)[0];
+    const strong = allData.filter(d => d.momentumScore >= 70).length;
+    const ctry = top.country ? ', ' + top.country : '';
+    el.innerHTML =
+      '<strong>What this is:</strong> ' + allData.length +
+      ' STOXX Europe 600 stocks ranked by a backward-looking momentum score (a 12-1 return blend, 0–100). ' +
+      '<strong>Right now</strong> the strongest is <strong>' + top.symbol + '</strong> (' +
+      top.sector + ctry + ', score ' + top.momentumScore.toFixed(1) + '); ' +
+      strong + ' name' + (strong === 1 ? '' : 's') + ' score 70 or above. ' +
+      'A descriptive ranking with no crash or regime protection — not a buy list.';
   }
 
   // ==================== KPIs ====================
@@ -1136,6 +1169,7 @@ body {
     initEvents();
     applyFilters();
     renderSidebar();
+    renderConclusion();
 
     sectorPanelOpen = true;
     dom.sectorPanel.classList.add('open');
