@@ -267,7 +267,6 @@
     "HUH1V.HE": "base",
     "HWDN.L": "base",
     "IAG.L": "base",
-    "IBE-D.MC": "missing",
     "IBE.MC": "base",
     "ICG.L": "base",
     "IDR.MC": "base",
@@ -603,9 +602,9 @@
     "ZURN.SW": "base"
   },
   "summary": {
-    "expected": 601,
-    "covered": 601,
+    "expected": 600,
+    "covered": 600,
     "base": 596,
-    "fetch": 5
+    "fetch": 4
   }
 }
