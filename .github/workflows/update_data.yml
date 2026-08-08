@@ -3,8 +3,12 @@ name: Update STOXX 600 MomentumRank Data
 on:
   schedule:
     # 09:13 UTC = 11:13 CET делнично — нечетен час, избягва IP pool collision
-    # с SP500 (08:37 UTC) и с peak hours (round minutes)
+    # с SP500 (08:37 UTC) и с peak hours (round minutes).
     - cron: "13 9 * * 1-5"
+    # Sat 03:53 UTC — after price-daily (00:37) writes Friday's close, before the
+    # satellite collect (06:13); odd minutes dodge the round-hour scheduler queue.
+    # Serialized after SP500-momentumrank's Saturday slot (03:43).
+    - cron: "53 3 * * 6"
   workflow_dispatch:
 
 permissions:
