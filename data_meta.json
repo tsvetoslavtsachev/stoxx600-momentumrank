@@ -1,14 +1,14 @@
 {
-  "updated": "2026-08-14 10:15 UTC",
+  "updated": "2026-08-15 04:15 UTC",
   "source": "iShares EXSA + yfinance",
-  "count": 598,
-  "fresh_count": 597,
+  "count": 599,
+  "fresh_count": 598,
   "stale_count": 1,
   "missing_count": 2,
   "retry_recovered": 0,
   "fresh_rate": 0.995,
   "total_rate": 0.9967,
-  "vol_ok": 598,
+  "vol_ok": 599,
   "partial_history_count": 4,
   "stale": false,
   "warnings": []
