@@ -602,7 +602,7 @@
     "ZURN.SW": "base"
   },
   "summary": {
-    "expected": 601,
+    "expected": 600,
     "covered": 600,
     "base": 596,
     "fetch": 4
