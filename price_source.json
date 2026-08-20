@@ -385,7 +385,7 @@
     "NTGY.MC": "base",
     "NWG.L": "base",
     "NXT.L": "base",
-    "OCTV-SDB.ST": "missing",
+    "OCTV-SDB.ST": "fetch",
     "OMV.VI": "base",
     "OR.PA": "base",
     "ORA.PA": "base",
