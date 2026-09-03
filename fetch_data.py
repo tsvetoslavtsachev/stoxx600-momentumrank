@@ -30,6 +30,15 @@ import time
 from datetime import datetime, timedelta, timezone
 from io import StringIO
 
+# Печатът, не логиката: под Windows конзолата е cp1252 и стрелката в отчета
+# гърми с UnicodeEncodeError, тоест скриптът пада СЛЕД като е свалил данните.
+# В GitHub Actions потокът вече е UTF-8, затова там това е без ефект.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8")
+    except (AttributeError, ValueError):
+        pass
+
 import pandas as pd
 import requests
 
