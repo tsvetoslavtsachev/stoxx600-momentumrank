@@ -26,9 +26,7 @@
 import json
 import math
 import sys
-import time
 from datetime import datetime, timedelta, timezone
-from io import StringIO
 
 # Печатът, не логиката: под Windows конзолата е cp1252 и стрелката в отчета
 # гърми с UnicodeEncodeError, тоест скриптът пада СЛЕД като е свалил данните.
@@ -40,8 +38,8 @@ for _stream in (sys.stdout, sys.stderr):
         pass
 
 import pandas as pd
-import requests
 
+from ishares_holdings import fetch_holdings
 from momentum_core import (
     HAS_CURL_CFFI,
     bulk_download_prices,
@@ -75,15 +73,6 @@ OUTPUT_FILE = "data.json"
 META_FILE = "data_meta.json"
 LOOKBACK_DAYS = 400
 
-ISHARES_URL = (
-    "https://www.ishares.com/de/privatanleger/de/produkte/251931/"
-    "ishares-stoxx-europe-600-ucits-etf-de-fund/1478358465952.ajax"
-    "?fileType=csv&fileName=EXSA_holdings&dataType=fund"
-)
-ISHARES_REFERER = (
-    "https://www.ishares.com/de/privatanleger/de/produkte/251931/"
-    "ishares-stoxx-europe-600-ucits-etf-de-fund"
-)
 
 MIN_TOTAL_RATE = 0.60
 MIN_FRESH_RATE = 0.95
@@ -242,46 +231,7 @@ def fetch_ishares_constituents():
     print("Phase 0: Fetch constituents from iShares")
     print("-" * 52)
 
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/120.0.0.0 Safari/537.36"
-        ),
-        "Accept": "text/csv,application/csv,text/plain,*/*",
-        "Accept-Language": "en-US,en;q=0.9,de;q=0.8",
-        "Referer": ISHARES_REFERER,
-    }
-
-    resp = None
-    last_exc = None
-    for attempt in range(1, 4):
-        try:
-            resp = requests.get(ISHARES_URL, headers=headers, timeout=30)
-            resp.raise_for_status()
-            print(f"  Downloaded {len(resp.text)} chars (status {resp.status_code})")
-            break
-        except Exception as e:
-            last_exc = e
-            print(f"  attempt {attempt}: {e}")
-            if attempt < 3:
-                time.sleep(3 * attempt)
-
-    if resp is None or resp.status_code != 200:
-        raise RuntimeError(f"Failed to fetch iShares CSV: {last_exc}")
-
-    lines = resp.text.strip().split("\n")
-    header_idx = None
-    for i, line in enumerate(lines):
-        if line.startswith("Emittententicker") or line.startswith('"Emittententicker"'):
-            header_idx = i
-            break
-    if header_idx is None:
-        raise RuntimeError("Could not find 'Emittententicker' header in CSV")
-
-    csv_body = "\n".join(lines[header_idx:])
-    df = pd.read_csv(StringIO(csv_body), sep=",", quotechar='"')
-    df = df[df["Anlageklasse"].str.strip() == "Aktien"].copy()
+    df = fetch_holdings()
 
     print(f"  Parsed {len(df)} equity holdings")
 
