@@ -1,6 +1,5 @@
 {
   "by_symbol": {
-    "2689012D.L": "missing",
     "A2A.MI": "base",
     "A5G.IR": "base",
     "AAF.L": "base",
@@ -409,6 +408,7 @@
     "PLUS.L": "base",
     "PNDORA.CO": "base",
     "PNN.L": "base",
+    "PNNN.L": "missing",
     "PPC.AT": "fetch",
     "PRU.L": "base",
     "PRX.AS": "base",
@@ -567,6 +567,7 @@
     "UMI.BR": "base",
     "UNI.MC": "base",
     "UNI.MI": "base",
+    "UNIAXA.MI": "missing",
     "UPM.HE": "base",
     "URW.PA": "base",
     "UTG.L": "base",
@@ -606,8 +607,8 @@
   },
   "summary": {
     "expected": 604,
-    "covered": 603,
+    "covered": 604,
     "base": 583,
-    "fetch": 20
+    "fetch": 21
   }
 }
