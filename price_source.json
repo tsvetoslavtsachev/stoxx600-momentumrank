@@ -45,7 +45,7 @@
     "ALLFG.AS": "base",
     "ALLN.SW": "base",
     "ALO.PA": "base",
-    "ALPHA.AT": "fetch",
+    "ALPHA.AT": "missing",
     "ALSYDB.CO": "base",
     "ALV.DE": "base",
     "AM.PA": "base",
@@ -93,7 +93,6 @@
     "BEIJ-B.ST": "base",
     "BELA.AT": "fetch",
     "BESI.AS": "base",
-    "BEZ.L": "base",
     "BFT.WA": "base",
     "BG.VI": "base",
     "BGEO.L": "base",
@@ -477,7 +476,6 @@
     "SCYR.MC": "base",
     "SDF.DE": "base",
     "SDLF.L": "base",
-    "SDR.L": "base",
     "SDZ.SW": "base",
     "SEB-A.ST": "base",
     "SECT-B.ST": "base",
@@ -606,9 +604,9 @@
     "ZURN.SW": "base"
   },
   "summary": {
-    "expected": 604,
-    "covered": 604,
-    "base": 583,
+    "expected": 602,
+    "covered": 602,
+    "base": 581,
     "fetch": 21
   }
 }
