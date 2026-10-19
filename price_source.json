@@ -45,7 +45,7 @@
     "ALLFG.AS": "base",
     "ALLN.SW": "base",
     "ALO.PA": "base",
-    "ALPHA.AT": "missing",
+    "ALPHA.AT": "fetch",
     "ALSYDB.CO": "base",
     "ALV.DE": "base",
     "AM.PA": "base",
