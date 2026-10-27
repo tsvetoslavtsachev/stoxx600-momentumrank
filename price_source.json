@@ -408,7 +408,6 @@
     "PNDORA.CO": "base",
     "PNN.L": "base",
     "PNNF.L": "missing",
-    "PNNN.L": "missing",
     "PPC.AT": "fetch",
     "PRU.L": "base",
     "PRX.AS": "base",
@@ -605,9 +604,9 @@
     "ZURN.SW": "base"
   },
   "summary": {
-    "expected": 603,
-    "covered": 603,
+    "expected": 602,
+    "covered": 602,
     "base": 581,
-    "fetch": 22
+    "fetch": 21
   }
 }
