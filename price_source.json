@@ -533,6 +533,7 @@
     "TBCG.L": "base",
     "TCAP.L": "base",
     "TE.PA": "base",
+    "TECN.SW": "fetch",
     "TEF.MC": "base",
     "TEG.DE": "base",
     "TEL.OL": "base",
@@ -543,6 +544,7 @@
     "TEP.PA": "base",
     "TGS.OL": "base",
     "TKA.DE": "base",
+    "TKCC.DE": "missing",
     "TLX.DE": "base",
     "TOM.OL": "base",
     "TPEIR.AT": "fetch",
@@ -603,9 +605,9 @@
     "ZURN.SW": "base"
   },
   "summary": {
-    "expected": 601,
-    "covered": 601,
+    "expected": 603,
+    "covered": 603,
     "base": 581,
-    "fetch": 20
+    "fetch": 22
   }
 }
