@@ -591,6 +591,7 @@
     "VZN.SW": "base",
     "WDP.BR": "base",
     "WEIR.L": "base",
+    "WISA.HE": "missing",
     "WISE.L": "base",
     "WKL.AS": "base",
     "WPP.L": "base",
@@ -605,9 +606,9 @@
     "ZURN.SW": "base"
   },
   "summary": {
-    "expected": 603,
-    "covered": 603,
+    "expected": 604,
+    "covered": 604,
     "base": 581,
-    "fetch": 22
+    "fetch": 23
   }
 }
