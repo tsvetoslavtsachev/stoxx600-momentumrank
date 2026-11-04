@@ -544,7 +544,6 @@
     "TEP.PA": "base",
     "TGS.OL": "base",
     "TKA.DE": "base",
-    "TKCC.DE": "missing",
     "TLX.DE": "base",
     "TOM.OL": "base",
     "TPEIR.AT": "fetch",
@@ -566,7 +565,6 @@
     "UMI.BR": "base",
     "UNI.MC": "base",
     "UNI.MI": "base",
-    "UNIAXA.MI": "missing",
     "UPM.HE": "base",
     "URW.PA": "base",
     "UTG.L": "base",
@@ -606,9 +604,9 @@
     "ZURN.SW": "base"
   },
   "summary": {
-    "expected": 604,
-    "covered": 604,
+    "expected": 602,
+    "covered": 602,
     "base": 581,
-    "fetch": 23
+    "fetch": 21
   }
 }
