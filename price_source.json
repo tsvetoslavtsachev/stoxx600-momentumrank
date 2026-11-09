@@ -308,6 +308,7 @@
     "KBX.DE": "base",
     "KCR.HE": "base",
     "KER.PA": "base",
+    "KESK0BU0.HE": "missing",
     "KESKOB.HE": "base",
     "KGF.L": "base",
     "KGH.WA": "base",
@@ -471,7 +472,7 @@
     "SCHP.SW": "base",
     "SCMN.SW": "base",
     "SCR.PA": "base",
-    "SCT.L": "fetch",
+    "SCT.L": "missing",
     "SCYR.MC": "base",
     "SDF.DE": "base",
     "SDLF.L": "base",
@@ -604,9 +605,9 @@
     "ZURN.SW": "base"
   },
   "summary": {
-    "expected": 602,
-    "covered": 602,
+    "expected": 603,
+    "covered": 603,
     "base": 581,
-    "fetch": 21
+    "fetch": 22
   }
 }
