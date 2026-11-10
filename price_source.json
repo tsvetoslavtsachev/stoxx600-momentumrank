@@ -472,7 +472,7 @@
     "SCHP.SW": "base",
     "SCMN.SW": "base",
     "SCR.PA": "base",
-    "SCT.L": "missing",
+    "SCT.L": "fetch",
     "SCYR.MC": "base",
     "SDF.DE": "base",
     "SDLF.L": "base",
