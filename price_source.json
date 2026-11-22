@@ -247,6 +247,7 @@
     "GTT.PA": "base",
     "HAG.DE": "base",
     "HBAN.SW": "base",
+    "HBR.L": "fetch",
     "HEI.DE": "base",
     "HEIA.AS": "base",
     "HEIO.AS": "base",
@@ -299,7 +300,6 @@
     "ITRK.L": "base",
     "ITV.L": "base",
     "ITX.MC": "base",
-    "IVG.MI": "base",
     "JMAT.L": "base",
     "JMT.LS": "base",
     "JYSK.CO": "base",
@@ -308,8 +308,8 @@
     "KBX.DE": "base",
     "KCR.HE": "base",
     "KER.PA": "base",
-    "KESK0BU0.HE": "missing",
     "KESKOB.HE": "base",
+    "KESKOBU0126.HE": "missing",
     "KGF.L": "base",
     "KGH.WA": "base",
     "KGX.DE": "base",
@@ -429,7 +429,6 @@
     "RAND.AS": "base",
     "RBI.VI": "base",
     "RBREW.CO": "base",
-    "REC.MI": "base",
     "RED.MC": "base",
     "REL.L": "base",
     "REP.MC": "base",
@@ -604,9 +603,9 @@
     "ZURN.SW": "base"
   },
   "summary": {
-    "expected": 602,
-    "covered": 602,
-    "base": 581,
-    "fetch": 21
+    "expected": 601,
+    "covered": 601,
+    "base": 579,
+    "fetch": 22
   }
 }
