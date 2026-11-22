@@ -5,10 +5,12 @@ on:
     # 09:13 UTC = 11:13 CET делнично — нечетен час, избягва IP pool collision
     # с SP500 (08:37 UTC) и с peak hours (round minutes).
     - cron: "13 9 * * 1-5"
-    # Sat 03:53 UTC — after price-daily (00:37) writes Friday's close, before the
-    # satellite collect (06:13); odd minutes dodge the round-hour scheduler queue.
-    # Serialized after SP500-momentumrank's Saturday slot (03:43).
-    - cron: "53 3 * * 6"
+    # Sat: after price-daily writes Friday's close, before the satellite collect (16:13);
+    # odd minutes dodge the round-hour scheduler queue. Serialized after SP500-momentumrank's
+    # Saturday slot (14:43).
+    # ИЛЮ3 В2 (22.11.2026): съботният ценови ход е в 13:37 UTC (европейският петък); резервата
+    # на четците е след него. В събота с диригента този ход е втори и не пише нищо ново.
+    - cron: "53 14 * * 6"
   workflow_dispatch:
 
 permissions:
