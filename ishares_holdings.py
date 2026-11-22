@@ -8,6 +8,11 @@ History: from 2026-09-23 iShares serves a new site. The old endpoint
   .../1478358465952.ajax?fileType=csv&fileName=EXSA_holdings&dataType=fund
 answers 200 text/html (the product page), so the header search found nothing.
 The CSV now lives at .../latest-holdings.csv in the same column format.
+From 2026-11-13 that link answers 404 too; the first URL is now the Swiss
+professional site (English columns, '.' decimals, ’ thousands), whose values
+_to_german_values() rewrites to the German form. Every successful fetch is
+cross-checked against Xtrackers (same index, other provider); a divergence or
+an Xtrackers outage is logged, never fatal (df.attrs["crosscheck"]).
 
 parse_holdings_csv() returns a DataFrame with the canonical German column
 names (Emittententicker, Name, Sektor, Anlageklasse, Gewichtung (%), Kurs,
@@ -30,6 +35,13 @@ _PRODUCT = "https://www.ishares.com/de/privatanleger/de/produkte/251931"
 
 # Tried in order; the first response that parses wins.
 ISHARES_URLS = (
+    # Swiss professional site, English columns (verified by hand 22.11.2026,
+    # holdings as of 19.11.2026, 601 equities). Values are normalised to the
+    # German form below, so callers see the same strings as from the DE site.
+    "https://www.ishares.com/ch/professionals/en/products/251931/"
+    "ishares-stoxx-europe-600-ucits-etf-de-fund/1495092304805.ajax"
+    "?fileType=csv&fileName=EXSA_holdings&dataType=fund",
+    # DE site link from 10.10.2026; 404 since 13.11.2026.
     f"{_PRODUCT}/ishares-stoxx-europe-600-ucits-etf-de/latest-holdings.csv",
     # Legacy endpoint (before 2026-09-23). Kept as fallback in case it comes back.
     f"{_PRODUCT}/ishares-stoxx-europe-600-ucits-etf-de-fund/1478358465952.ajax"
@@ -65,6 +77,29 @@ EQUITY_CLASSES = {"aktien", "equity"}
 
 # Below this many equity rows the file is truncated or not the EXSA holdings.
 MIN_EQUITIES = 400
+
+# English site values -> the German labels the DE site used (taken from the
+# fixture exsa_holdings_2026-10-08.csv). Callers map the German labels.
+SECTOR_EN_TO_DE = {
+    "Energy": "Energie", "Financials": "Finanzwesen", "Health Care": "Gesundheitsversorgung",
+    "Information Technology": "IT", "Real Estate": "Immobilien", "Industrials": "Industrie",
+    "Communication": "Kommunikation", "Communication Services": "Kommunikation",
+    "Materials": "Materialien", "Consumer Staples": "Nichtzyklische Konsumgüter",
+    "Utilities": "Versorger", "Consumer Discretionary": "Zyklische Konsumgüter",
+}
+COUNTRY_EN_TO_DE = {
+    "Belgium": "Belgien", "Germany": "Deutschland", "Denmark": "Dänemark", "Finland": "Finnland",
+    "France": "Frankreich", "Greece": "Griechenland", "Ireland": "Irland", "Italy": "Italien",
+    "Netherlands": "Niederlande", "Norway": "Norwegen", "Poland": "Polen", "Portugal": "Portugal",
+    "Sweden": "Schweden", "Switzerland": "Schweiz", "Spain": "Spanien",
+    "United Kingdom": "Vereinigtes Königreich", "Austria": "Österreich",
+    "Luxembourg": "Luxemburg", "Czech Republic": "Tschechien", "Hungary": "Ungarn",
+}
+NUMERIC_COLUMNS = ("Gewichtung (%)", "Kurs")
+
+# Second source for a cross-check (no tickers, so it cannot replace iShares).
+XTRACKERS_URL = ("https://etf.deutsche-am.com/etfdata/export/GBR/ENG/excel/product/"
+                 "constituent/LU0328475792/")
 
 
 class IsharesHoldingsError(RuntimeError):
@@ -143,7 +178,93 @@ def parse_holdings_csv(text: str, content_type: str | None = None,
         raise IsharesHoldingsError(
             f"iShares holdings CSV has only {len(df)} equity rows (< {min_equities}); "
             f"{_describe(text, content_type)}")
-    return df.reset_index(drop=True)
+    return _to_german_values(df).reset_index(drop=True)
+
+
+def _decimal_mark(values) -> str:
+    """',' (German site) or '.' (English/Swiss site), read from the weights:
+    a weight like '3,75' or '3.75' always carries the decimal mark."""
+    commas = sum(1 for v in values if re.fullmatch(r"\d+,\d+", v))
+    dots = sum(1 for v in values if re.fullmatch(r"\d+\.\d+", v))
+    return "," if commas >= dots else "."
+
+
+def _de_number(s: str, mark: str) -> str:
+    """Rewrite a number to the German form '1288,20' (no thousands mark)."""
+    s = s.replace("’", "").replace("'", "").replace(" ", "")
+    if mark == ".":
+        s = s.replace(",", "")
+    else:
+        s = s.replace(".", "").replace(",", ".")
+    try:
+        float(s)
+    except ValueError:
+        return ""
+    return s.replace(".", ",")
+
+
+def _to_german_values(df: pd.DataFrame) -> pd.DataFrame:
+    """English-site values -> German-site values (sector, country, numbers).
+    German input passes through unchanged."""
+    mark = _decimal_mark(df["Gewichtung (%)"])
+    for c in NUMERIC_COLUMNS:
+        df[c] = [_de_number(v, mark) for v in df[c]]
+    df["Sektor"] = df["Sektor"].map(lambda v: SECTOR_EN_TO_DE.get(v, v))
+    df["Standort"] = df["Standort"].map(lambda v: COUNTRY_EN_TO_DE.get(v, v))
+    return df
+
+
+_NAME_STOP = {"AG", "SA", "PLC", "NV", "N", "SE", "AB", "ASA", "SPA", "INC", "LTD", "HOLDING",
+              "HOLDINGS", "GROUP", "CLASS", "A", "B", "REG", "THE", "DE", "OYJ", "AS", "CORP",
+              "PAR", "PS", "ORD"}
+
+
+def _name_key(s: str) -> str:
+    words = [w for w in re.sub(r"[^A-Z0-9 ]", " ", str(s).upper()).split() if w not in _NAME_STOP]
+    return " ".join(words[:2])
+
+
+def crosscheck(ishares: pd.DataFrame, xtr: pd.DataFrame) -> dict:
+    """Compare iShares EXSA with Xtrackers (same index) by name and weight.
+    xtr: columns Name, Weighting (fraction), Type of Security."""
+    x = xtr[xtr["Type of Security"].astype(str).str.casefold().eq("equities")].copy()
+    x["w"] = pd.to_numeric(x["Weighting"], errors="coerce") * 100
+    i = ishares.copy()
+    i["w"] = pd.to_numeric(i["Gewichtung (%)"].str.replace(",", "."), errors="coerce")
+    wi = i.groupby(i["Name"].map(_name_key))["w"].sum()
+    wx = x.groupby(x["Name"].map(_name_key))["w"].sum()
+    both = wi.index.intersection(wx.index)
+    diff = (wi[both] - wx[both]).abs()
+    res = {
+        "n_ishares": int(len(i)), "n_xtrackers": int(len(x)),
+        "matched_weight_pct": round(float(wi[both].sum()), 2),
+        "weight_diff_p95": round(float(diff.quantile(0.95)), 4) if len(diff) else None,
+        "weight_diff_max": round(float(diff.max()), 4) if len(diff) else None,
+    }
+    res["ok"] = bool(abs(res["n_ishares"] - res["n_xtrackers"]) <= 15
+                     and res["matched_weight_pct"] >= 95
+                     and (res["weight_diff_p95"] or 0) <= 0.05)
+    return res
+
+
+def crosscheck_xtrackers(ishares: pd.DataFrame, timeout: int = 30, log=print) -> dict | None:
+    """Download Xtrackers constituents and cross-check. Never raises: the
+    second source is a witness, not a gate; its outage must not stop the run."""
+    try:
+        resp = requests.get(XTRACKERS_URL, headers={"User-Agent": HTTP_HEADERS["User-Agent"]},
+                            timeout=timeout)
+        resp.raise_for_status()
+        raw = pd.read_excel(io.BytesIO(resp.content), header=None)
+        hdr = next(i for i in range(min(30, len(raw)))
+                   if {"Name", "Weighting"} <= set(map(str, raw.iloc[i].tolist())))
+        xtr = raw.iloc[hdr + 1:].set_axis([str(c) for c in raw.iloc[hdr]], axis=1)
+        res = crosscheck(ishares, xtr)
+    except Exception as e:  # noqa: BLE001 (witness only)
+        log(f"  WARN Xtrackers cross-check unavailable: {type(e).__name__}: {e}")
+        return None
+    tag = "OK" if res["ok"] else "WARN"
+    log(f"  {tag} Xtrackers cross-check: {res}")
+    return res
 
 
 def fetch_holdings(urls=ISHARES_URLS, attempts: int = 3, timeout: int = 30,
@@ -171,5 +292,6 @@ def fetch_holdings(urls=ISHARES_URLS, attempts: int = 3, timeout: int = 30,
                 outcomes.append(f"{url}: {e}")
                 break  # a format problem will not fix itself on retry
             log(f"  iShares: parsed {len(df)} equity holdings")
+            df.attrs["crosscheck"] = crosscheck_xtrackers(df, log=log)
             return df
     raise IsharesHoldingsError("Could not get EXSA holdings:\n  " + "\n  ".join(outcomes))
