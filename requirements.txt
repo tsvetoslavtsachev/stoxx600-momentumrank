@@ -6,3 +6,4 @@ requests>=2.31
 pyyaml>=6.0            # INIT-22 P9: collectors.price.consumer parses config.yaml (symbol_to_series)
 lxml
 html5lib
+openpyxl>=3.1
