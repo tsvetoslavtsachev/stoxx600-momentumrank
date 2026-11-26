@@ -494,6 +494,7 @@
     "SIKA.SW": "base",
     "SKA-B.ST": "base",
     "SKF-B.ST": "base",
+    "SKFVER-B.ST": "missing",
     "SLHN.SW": "base",
     "SMIN.L": "base",
     "SN.L": "base",
@@ -603,9 +604,9 @@
     "ZURN.SW": "base"
   },
   "summary": {
-    "expected": 601,
-    "covered": 601,
+    "expected": 602,
+    "covered": 602,
     "base": 579,
-    "fetch": 22
+    "fetch": 23
   }
 }
