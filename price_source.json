@@ -309,6 +309,7 @@
     "KCR.HE": "base",
     "KER.PA": "base",
     "KESKOB.HE": "base",
+    "KESKOBN0126.HE": "missing",
     "KESKOBU0126.HE": "missing",
     "KGF.L": "base",
     "KGH.WA": "base",
@@ -604,9 +605,9 @@
     "ZURN.SW": "base"
   },
   "summary": {
-    "expected": 602,
-    "covered": 602,
+    "expected": 603,
+    "covered": 603,
     "base": 579,
-    "fetch": 23
+    "fetch": 24
   }
 }
